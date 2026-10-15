@@ -1,0 +1,152 @@
+{
+  "corpus_id": "R02_AGP_CORPUS_V1",
+  "frozen_at": "2026-10-14",
+  "selection_rule": "Frozen before scanner results. Do not remove failures.",
+  "success_metrics": {
+    "false_resolved_values": 0,
+    "resolved_case_agreement_percent": 100,
+    "coverage": "measured_not_optimized"
+  },
+  "repos": [
+    {
+      "repo": "react-native-community/template",
+      "branch": "main",
+      "sha": "fe29a9ad1344af52e787cd0fa3a5b707d631bb85",
+      "family": "modern RN template",
+      "scan_subdir": "template"
+    },
+    {
+      "repo": "react/react-native",
+      "branch": "main",
+      "sha": "a443ea471c2d7676e6bc42222ddf8a960944ac42",
+      "family": "RN framework monorepo / version catalog",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "mattermost/mattermost-mobile",
+      "branch": "main",
+      "sha": "726cd9865d4b2c0040853e9c364fa6365791dbb1",
+      "family": "production OSS RN app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "RocketChat/Rocket.Chat.ReactNative",
+      "branch": "develop",
+      "sha": "a08ab04b98021737c119aea9978c85fdecc4c6cc",
+      "family": "production OSS RN app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "Expensify/App",
+      "branch": "main",
+      "sha": "f3dc42e57a823f834120cd9f6557b61f04b70953",
+      "family": "production OSS RN app / monorepo",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "MetaMask/metamask-mobile",
+      "branch": "main",
+      "sha": "0c61213714554680d5421af337b72f89e0f72f7d",
+      "family": "production OSS RN app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "rainbow-me/rainbow",
+      "branch": "develop",
+      "sha": "e406e093f1b7afbd212023dcc52e14d6a3bce230",
+      "family": "production OSS RN app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "jitsi/jitsi-meet",
+      "branch": "master",
+      "sha": "8a85912a0424ac2dd159853c242630bd11760701",
+      "family": "production OSS RN app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "BlueWallet/BlueWallet",
+      "branch": "master",
+      "sha": "55df7d2c4385080b42b39333ad3b2faf5d01400e",
+      "family": "production OSS RN app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "zulip/zulip-mobile",
+      "branch": "main",
+      "sha": "d7cf6da79b4b9467e240b42f24330e97390a8aff",
+      "family": "production OSS RN app / transition layout",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "expo/expo",
+      "branch": "main",
+      "sha": "01d7e772cf4d369720eb62f7b2a5110ac323d9bc",
+      "family": "Expo monorepo",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "software-mansion/react-native-reanimated",
+      "branch": "main",
+      "sha": "ca7c3fbc2879c976e19e41bf2c6206042becf154",
+      "family": "RN native library / custom Gradle",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "software-mansion/react-native-gesture-handler",
+      "branch": "main",
+      "sha": "f5da9afed1bd1d6c5e51a30c3a595955fdd49444",
+      "family": "RN native library / custom Gradle",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "react-native-maps/react-native-maps",
+      "branch": "master",
+      "sha": "39c6fd177d6c91ea087fcf083fd484f2499b6ea8",
+      "family": "RN native library / example app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "wix/react-native-navigation",
+      "branch": "master",
+      "sha": "1de39e0d5da34c077b4998b9f0cbe972e770a464",
+      "family": "RN native library / custom integration",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "invertase/react-native-firebase",
+      "branch": "main",
+      "sha": "c1471450b06019dd718f59a8a1b4c5bf941cc1bb",
+      "family": "RN native library monorepo",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "react-native-device-info/react-native-device-info",
+      "branch": "master",
+      "sha": "06a9ed6d700cab9c55b363e6fa944ee8e5605745",
+      "family": "RN native library / example app",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "lottie-react-native/lottie-react-native",
+      "branch": "master",
+      "sha": "2d60a7b0b6782d1f606991654880b993566dba6d",
+      "family": "RN native library monorepo",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "wcandillon/react-native-skia",
+      "branch": "main",
+      "sha": "20b4de3a60f1719d9a87af36140af91b81c13380",
+      "family": "RN native library / custom Gradle",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "reown-com/react-native-examples",
+      "branch": "main",
+      "sha": "28ec79e02f9dac3ce817cd4944757df79d92d6eb",
+      "family": "RN example-app collection / monorepo",
+      "scan_subdir": ""
+    }
+  ]
+}
