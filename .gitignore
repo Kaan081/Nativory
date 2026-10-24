@@ -21,6 +21,9 @@ dist/
 .coverage
 htmlcov/
 
+# Local corpus checkouts (validation only)
+.ndk_corpus_checkouts/
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

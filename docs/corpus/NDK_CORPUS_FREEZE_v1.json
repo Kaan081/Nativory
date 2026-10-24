@@ -1,0 +1,58 @@
+{
+  "corpus_id": "NDK_PROVENANCE_CORPUS_V1",
+  "frozen_at": "2026-10-24",
+  "tool_commit": "d763ad6",
+  "selection_rule": "Subset of R02_AGP_CORPUS_V1 frozen SHAs. Do not remove failures. Source-only checkouts unless noted.",
+  "repos": [
+    {
+      "repo": "react-native-community/template",
+      "sha": "fe29a9ad1344af52e787cd0fa3a5b707d631bb85",
+      "scan_subdir": "template"
+    },
+    {
+      "repo": "mattermost/mattermost-mobile",
+      "sha": "726cd9865d4b2c0040853e9c364fa6365791dbb1",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "MetaMask/metamask-mobile",
+      "sha": "0c61213714554680d5421af337b72f89e0f72f7d",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "zulip/zulip-mobile",
+      "sha": "d7cf6da79b4b9467e240b42f24330e97390a8aff",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "react-native-maps/react-native-maps",
+      "sha": "39c6fd177d6c91ea087fcf083fd484f2499b6ea8",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "software-mansion/react-native-reanimated",
+      "sha": "ca7c3fbc2879c976e19e41bf2c6206042becf154",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "react/react-native",
+      "sha": "a443ea471c2d7676e6bc42222ddf8a960944ac42",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "RocketChat/Rocket.Chat.ReactNative",
+      "sha": "a08ab04b98021737c119aea9978c85fdecc4c6cc",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "jitsi/jitsi-meet",
+      "sha": "8a85912a0424ac2dd159853c242630bd11760701",
+      "scan_subdir": ""
+    },
+    {
+      "repo": "BlueWallet/BlueWallet",
+      "sha": "55df7d2c4385080b42b39333ad3b2faf5d01400e",
+      "scan_subdir": ""
+    }
+  ]
+}
