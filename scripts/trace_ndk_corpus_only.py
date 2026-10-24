@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
-from pathlib import Path
-
-import os
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "docs" / "corpus" / "NDK_CORPUS_FREEZE_v1.json"
@@ -26,6 +25,18 @@ def git_head(repo: Path) -> str | None:
         text=True,
     )
     return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def working_tree_dirty(repo: Path) -> bool:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return True
+    return bool(proc.stdout.strip())
 
 
 def main() -> int:
@@ -59,7 +70,7 @@ def main() -> int:
         proc = subprocess.run(
             [sys.executable, "-m", "rn_readiness", "trace-ndk", str(scan), "--json"],
             cwd=ROOT,
-            env={**dict(**__import__("os").environ), "PYTHONPATH": str(ROOT / "src")},
+            env={**dict(**os.environ), "PYTHONPATH": str(ROOT / "src")},
             capture_output=True,
             text=True,
         )
@@ -73,20 +84,29 @@ def main() -> int:
     if any(isinstance(item.get("trace"), dict) and "error" in item["trace"] for item in results):
         print(f"Skipped writing {RESULTS}: checkout/trace errors present")
         return 1
-    RESULTS.write_text(
-        json.dumps(
-            {
-                "corpus_id": spec["corpus_id"],
-                "frozen_at": spec["frozen_at"],
-                "tool_commit": spec["tool_commit"],
-                "checkout_root": str(CHECKOUT_ROOT),
-                "results": results,
-            },
-            indent=2,
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
+
+    if working_tree_dirty(ROOT):
+        print(f"Skipped writing {RESULTS}: repository working tree is dirty")
+        return 1
+
+    scanner_head = git_head(ROOT)
+    if not scanner_head:
+        print(f"Skipped writing {RESULTS}: could not resolve repository HEAD")
+        return 1
+
+    payload = {
+        "corpus_id": spec["corpus_id"],
+        "frozen_at": spec["frozen_at"],
+        "corpus_freeze_tool_commit": spec["tool_commit"],
+        "tool_commit": scanner_head,
+        "results": results,
+    }
+    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    if any(marker in encoded for marker in ("C:\\Users", "/Users/", "checkout_root")):
+        print(f"Skipped writing {RESULTS}: machine-specific path metadata detected")
+        return 1
+
+    RESULTS.write_text(encoded, encoding="utf-8")
     print(f"Wrote {RESULTS} ({len(results)} repos)")
     return 0
 
