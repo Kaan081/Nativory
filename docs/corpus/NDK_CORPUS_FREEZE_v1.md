@@ -18,7 +18,7 @@ Selection rule: ten SHAs taken from `R02_CORPUS_FREEZE_v1` (same pins). Do not r
 | 10 | BlueWallet/BlueWallet | `55df7d2c4385080b42b39333ad3b2faf5d01400e` | repo root | |
 
 Corpus checkouts live under `%TEMP%\\rn_readiness_ndk_corpus_v1` (machine-local).
-All runs: `trace-ndk` with `node_modules` absent unless noted â€” **no installed dependency NDK declarations** in this pass.
+All runs: `trace-ndk` with `node_modules` absent unless noted — **no installed dependency NDK declarations** in this pass.
 
 Machine-readable spec: [`NDK_CORPUS_FREEZE_v1.json`](NDK_CORPUS_FREEZE_v1.json)
 Run output: [`NDK_CORPUS_RESULTS_v1.json`](NDK_CORPUS_RESULTS_v1.json)
