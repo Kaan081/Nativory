@@ -1,0 +1,80 @@
+name: NDK GString Cast Runtime Probe
+
+on:
+  push:
+    branches:
+      - experiment/ndk-gstring-cast
+
+permissions:
+  contents: read
+
+jobs:
+  cast-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.1'
+
+      - name: Reproduce upstream GString cast behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/ndk-gstring-probe"
+          mkdir -p "$probe/child"
+
+          cat > "$probe/settings.gradle" <<'GROOVY'
+          rootProject.name = 'ndk-gstring-probe'
+          include ':child'
+          GROOVY
+
+          cat > "$probe/build.gradle" <<'GROOVY'
+          ext.gstringNdk = "${'27.1.12297006'}"
+          ext.stringNdk = '27.1.12297006'
+          ext.emptyNdk = ''
+          GROOVY
+
+          cat > "$probe/child/build.gradle.kts" <<'KOTLIN'
+          fun oldResolve(name: String): String? =
+              rootProject.findProperty(name) as? String
+
+          fun newResolve(name: String): String? =
+              (rootProject.findProperty(name) as? CharSequence)
+                  ?.toString()
+                  ?.takeIf { it.isNotEmpty() }
+
+          tasks.register("verifyCast") {
+              doLast {
+                  val raw = rootProject.findProperty("gstringNdk")
+
+                  check(raw is CharSequence)
+                  check(raw !is String)
+
+                  check(oldResolve("gstringNdk") == null)
+                  check(newResolve("gstringNdk") == "27.1.12297006")
+
+                  check(oldResolve("stringNdk") == "27.1.12297006")
+                  check(newResolve("stringNdk") == "27.1.12297006")
+
+                  check(oldResolve("emptyNdk") == "")
+                  check(newResolve("emptyNdk") == null)
+
+                  check(oldResolve("missingNdk") == null)
+                  check(newResolve("missingNdk") == null)
+
+                  println("GSTRING_OLD_CAST_FALLBACK: CONFIRMED")
+                  println("GSTRING_NEW_CAST_RESOLUTION: CONFIRMED")
+                  println("PLAIN_STRING_COMPATIBILITY: PASS")
+                  println("EMPTY_AND_MISSING_PROPERTIES: PASS")
+                  println("CAST_SEMANTICS: PASS")
+                  println("FULL_ANDROID_BUILD: NOT PERFORMED")
+              }
+          }
+          KOTLIN
+
+          gradle --no-daemon --offline -p "$probe" :child:verifyCast
