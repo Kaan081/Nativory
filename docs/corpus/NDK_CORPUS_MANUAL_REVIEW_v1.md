@@ -124,7 +124,7 @@ Attention: none.
 | Metric | Count |
 |---|---|
 | Repos in corpus | 10 |
-| Literal hits manually reviewed | 8 |
+| Literal hits manually reviewed | 7 |
 | MATCH | 8 |
 | FALSE POSITIVE | 0 |
 | AMBIGUOUS | 1 (MetaMask subproject propagation line) |
