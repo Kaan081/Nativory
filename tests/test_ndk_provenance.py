@@ -28,17 +28,23 @@ def _write_dependency(
     gradle_content: str,
     *,
     kotlin: bool = False,
+    gradle_relpath: str = "android/build.gradle",
 ) -> None:
     if package_name.startswith("@"):
         org, pkg = package_name.split("/", 1)
         root = repo / "node_modules" / org / pkg
     else:
         root = repo / "node_modules" / package_name
-    root.mkdir(parents=True)
+    root.mkdir(parents=True, exist_ok=True)
     (root / "package.json").write_text(json.dumps({"name": package_name}), encoding="utf-8")
-    filename = "build.gradle.kts" if kotlin else "build.gradle"
-    (root / "android" / filename).parent.mkdir(parents=True, exist_ok=True)
-    (root / "android" / filename).write_text(gradle_content, encoding="utf-8")
+    if gradle_relpath.endswith(".kts"):
+        gradle_path = root / gradle_relpath
+    elif kotlin:
+        gradle_path = root / gradle_relpath.replace("build.gradle", "build.gradle.kts")
+    else:
+        gradle_path = root / gradle_relpath
+    gradle_path.parent.mkdir(parents=True, exist_ok=True)
+    gradle_path.write_text(gradle_content, encoding="utf-8")
 
 
 def test_project_literal_ndk_declaration(tmp_path):
@@ -184,6 +190,98 @@ def test_existing_r02_scan_unchanged_after_ndk_work(tmp_path):
     )
     analysis = scan_run(str(repo))
     assert analysis.status.value == "checks_passed"
+
+
+def test_dependency_recursive_gradle_discovery(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_dependency(
+        repo,
+        "react-native",
+        'android { ndkVersion = rootProject.properties["ndkVersion"].toString() }\n',
+        kotlin=True,
+        gradle_relpath="ReactAndroid/build.gradle.kts",
+    )
+    _write_dependency(
+        repo,
+        "react-native",
+        "ndkVersion = libs.versions.ndkVersion.get()\n",
+        kotlin=True,
+        gradle_relpath="ReactAndroid/hermes-engine/build.gradle.kts",
+    )
+    result = trace_ndk(str(repo))
+    by_source = {(d.source, d.resolution_kind) for d in result.declarations}
+    assert (
+        "node_modules/react-native/ReactAndroid/build.gradle.kts",
+        NdkResolutionKind.ROOT_INHERITED,
+    ) in {(s, k) for s, k in by_source}
+    assert (
+        "node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts",
+        NdkResolutionKind.UNSUPPORTED_EXPRESSION,
+    ) in {(s, k) for s, k in by_source}
+
+
+def test_dependency_root_properties_ndk_inherited(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_dependency(
+        repo,
+        "react-native-safe-area-context",
+        "ndkVersion rootProject.ext.ndkVersion\n",
+        gradle_relpath="android/build.gradle",
+    )
+    item = trace_ndk(str(repo)).declarations[0]
+    assert item.owner == "react-native-safe-area-context"
+    assert item.resolution_kind is NdkResolutionKind.ROOT_INHERITED
+
+
+def test_dependency_prunes_nested_node_modules_and_build(tmp_path):
+    repo = _android_repo(tmp_path)
+    root = repo / "node_modules" / "acme-lib"
+    root.mkdir(parents=True)
+    (root / "package.json").write_text('{"name":"acme-lib"}', encoding="utf-8")
+    (root / "lib" / "build.gradle").parent.mkdir(parents=True)
+    (root / "lib" / "build.gradle").write_text('ndkVersion "1.2.3"\n', encoding="utf-8")
+    nested = root / "lib" / "node_modules" / "evil" / "android"
+    nested.mkdir(parents=True)
+    (nested / "build.gradle").write_text('ndkVersion "9.9.9"\n', encoding="utf-8")
+    build_dir = root / "lib" / "build" / "generated"
+    build_dir.mkdir(parents=True)
+    (build_dir / "build.gradle").write_text('ndkVersion "8.8.8"\n', encoding="utf-8")
+    result = trace_ndk(str(repo))
+    values = {d.value for d in result.declarations if d.owner == "acme-lib"}
+    assert values == {"1.2.3"}
+
+
+def test_glob_star_slash_star_does_not_erase_ndk_lines(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_dependency(
+        repo,
+        "hermes-like",
+        'fileTree("build").include("**/*.cmake", "**/*.marks")\n'
+        'ndkVersion = rootProject.properties["ndkVersion"].toString()\n',
+        kotlin=True,
+        gradle_relpath="ReactAndroid/hermes-engine/build.gradle.kts",
+    )
+    result = trace_ndk(str(repo))
+    assert any(
+        d.resolution_kind is NdkResolutionKind.ROOT_INHERITED
+        for d in result.declarations
+        if d.owner == "hermes-like"
+    )
+
+
+def test_same_file_preserves_root_inherited_and_unsupported(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_dependency(
+        repo,
+        "dual-shape",
+        'ndkVersion = rootProject.properties["ndkVersion"].toString()\n'
+        "ndkVersion = libs.versions.ndkVersion.get()\n",
+        kotlin=True,
+        gradle_relpath="android/build.gradle.kts",
+    )
+    kinds = [d.resolution_kind for d in trace_ndk(str(repo)).declarations]
+    assert kinds.count(NdkResolutionKind.ROOT_INHERITED) == 1
+    assert kinds.count(NdkResolutionKind.UNSUPPORTED_EXPRESSION) == 1
 
 
 def test_cli_trace_ndk_json(tmp_path, capsys):

@@ -5,13 +5,16 @@ import json
 import re
 from pathlib import Path
 
-from .collector import ProjectInputError, _relative_source, _safe_read, _strip_comments, project_android_root
+from .collector import ProjectInputError, _relative_source, _safe_read, project_android_root
 from .ndk_models import NdkDeclaration, NdkOwnerType, NdkResolutionKind, NdkTraceResult
 
 NDK_NUMERIC = re.compile(r"^(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))+\Z")
 NDK_LITERAL = re.compile(r'\bndkVersion\s*(?:=\s*)?["\']([^"\']+)["\']')
 NDK_INVOKE_LITERAL = re.compile(r'\bndkVersion\s*\(\s*["\']([^"\']+)["\']\s*\)')
 NDK_ROOT = re.compile(r"\bndkVersion\s*(?:=\s*)?rootProject\.ext\.ndkVersion\b")
+NDK_ROOT_PROPERTIES = re.compile(
+    r"\bndkVersion\s*=\s*rootProject\.properties\s*\[\s*[\"']ndkVersion[\"']\s*\]\.toString\s*\(\s*\)",
+)
 NDK_ASSIGN = re.compile(r"\bndkVersion\s*(?:=\s*)?(.+?)(?:\s*$|\s*//|\s*\})")
 SPURIOUS_NDK_CONTEXT = re.compile(
     r'\b(?:hasProperty|findProperty)\s*\(\s*["\']ndkVersion["\']',
@@ -23,12 +26,8 @@ PROJECT_GRADLE_FILES = (
     "app/build.gradle",
     "app/build.gradle.kts",
 )
-DEPENDENCY_GRADLE_FILES = (
-    "android/build.gradle",
-    "android/build.gradle.kts",
-    "android/app/build.gradle",
-    "android/app/build.gradle.kts",
-)
+PACKAGE_GRADLE_MAX_DEPTH = 16
+PACKAGE_GRADLE_PRUNE_DIRS = frozenset({"node_modules", "build", ".gradle"})
 
 ATTENTION_LITERAL_DIFF = "dependency_literal_pin_differs_from_project"
 
@@ -41,6 +40,11 @@ def _declaration_sort_key(item: NdkDeclaration) -> tuple[str, str, str, str, str
         item.resolution_kind.value,
         item.value or "",
     )
+
+
+def _strip_ndk_source(content: str) -> str:
+    """Line comments only; block-comment stripping false-matches on Gradle `**/*` globs."""
+    return "\n".join(line.split("//", 1)[0] for line in content.splitlines())
 
 
 def _is_spurious_ndk_line(line: str) -> bool:
@@ -83,7 +87,7 @@ def _parse_ndk_lines(
     source: str,
 ) -> list[NdkDeclaration]:
     declarations: list[NdkDeclaration] = []
-    text = _strip_comments(content)
+    text = _strip_ndk_source(content)
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or "ndkVersion" not in line:
@@ -118,12 +122,25 @@ def _parse_ndk_lines(
             ))
             continue
 
+        if _search_outside_strings(NDK_ROOT_PROPERTIES, line):
+            declarations.append(NdkDeclaration(
+                owner=owner,
+                owner_type=owner_type,
+                source=source,
+                value=None,
+                resolution_kind=NdkResolutionKind.ROOT_INHERITED,
+                resolution_path=("ndkVersion", 'rootProject.properties["ndkVersion"].toString()'),
+            ))
+            continue
+
         assign = _search_outside_strings(NDK_ASSIGN, line)
         if assign and assign.group(1).strip():
             expr = assign.group(1).strip().rstrip("}")
             if expr.startswith('"') or expr.startswith("'"):
                 continue
             if expr == "rootProject.ext.ndkVersion":
+                continue
+            if NDK_ROOT_PROPERTIES.search(expr):
                 continue
             declarations.append(NdkDeclaration(
                 owner=owner,
@@ -181,6 +198,41 @@ def _package_name(package_root: Path) -> str | None:
     return name if isinstance(name, str) and name.strip() else None
 
 
+def _discover_package_gradle_files(package_root: Path) -> list[Path]:
+    try:
+        root = package_root.resolve(strict=False)
+    except OSError:
+        return []
+    found: list[Path] = []
+
+    def walk(directory: Path, depth: int) -> None:
+        if depth > PACKAGE_GRADLE_MAX_DEPTH:
+            return
+        try:
+            entries = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+        except OSError:
+            return
+        for entry in entries:
+            if entry.is_symlink():
+                continue
+            try:
+                entry.relative_to(root)
+            except ValueError:
+                continue
+            if entry.is_file():
+                if entry.name in ("build.gradle", "build.gradle.kts"):
+                    found.append(entry)
+                continue
+            if not entry.is_dir():
+                continue
+            if entry.name in PACKAGE_GRADLE_PRUNE_DIRS or entry.name.startswith("."):
+                continue
+            walk(entry, depth + 1)
+
+    walk(root, 0)
+    return sorted(found, key=lambda path: path.relative_to(root).as_posix().lower())
+
+
 def _iter_installed_packages(node_modules: Path) -> list[Path]:
     if not node_modules.is_dir() or node_modules.is_symlink():
         return []
@@ -222,8 +274,7 @@ def _collect_dependency_declarations(repo: Path, project: Path) -> list[NdkDecla
             owner = _package_name(package_root)
             if owner is None:
                 continue
-            for relname in DEPENDENCY_GRADLE_FILES:
-                gradle_path = package_root / relname
+            for gradle_path in _discover_package_gradle_files(package_root):
                 rel = _relative_source(repo, gradle_path)
                 if rel in seen_sources:
                     continue
