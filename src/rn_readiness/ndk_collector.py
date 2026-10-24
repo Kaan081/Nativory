@@ -202,44 +202,6 @@ def _package_name(package_root: Path) -> str | None:
     return name if isinstance(name, str) and name.strip() else None
 
 
-def _package_shallow_gradle_marker(package_root: Path) -> bool:
-    """Cheap gate before deep Gradle discovery (no semver-specific paths)."""
-    try:
-        root = package_root.resolve(strict=False)
-    except OSError:
-        return False
-    for name in GRADLE_FILE_NAMES:
-        candidate = root / name
-        if candidate.is_file() and not candidate.is_symlink():
-            return True
-    android = root / "android"
-    if android.is_dir() and not android.is_symlink():
-        for name in GRADLE_FILE_NAMES:
-            candidate = android / name
-            if candidate.is_file() and not candidate.is_symlink():
-                return True
-    try:
-        entries = sorted(root.iterdir(), key=lambda item: item.name.lower())
-    except OSError:
-        return False
-    for entry in entries:
-        if entry.is_symlink() or not entry.is_dir():
-            continue
-        if entry.name in PACKAGE_GRADLE_PRUNE_DIRS or entry.name.startswith("."):
-            continue
-        for name in GRADLE_FILE_NAMES:
-            candidate = entry / name
-            if candidate.is_file() and not candidate.is_symlink():
-                return True
-        nested_android = entry / "android"
-        if nested_android.is_dir() and not nested_android.is_symlink():
-            for name in GRADLE_FILE_NAMES:
-                candidate = nested_android / name
-                if candidate.is_file() and not candidate.is_symlink():
-                    return True
-    return False
-
-
 def _discover_package_gradle_files(package_root: Path) -> list[Path]:
     try:
         root = package_root.resolve(strict=False)
@@ -311,8 +273,6 @@ def _collect_dependency_declarations(repo: Path, project: Path) -> list[NdkDecla
     for base in _node_modules_bases(repo, project):
         node_modules = base / "node_modules"
         for package_root in _iter_installed_packages(node_modules):
-            if not _package_shallow_gradle_marker(package_root):
-                continue
             gradle_paths = _discover_package_gradle_files(package_root)
             if not gradle_paths:
                 continue
