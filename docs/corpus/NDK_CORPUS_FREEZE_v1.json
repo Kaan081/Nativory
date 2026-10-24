@@ -1,7 +1,7 @@
 {
   "corpus_id": "NDK_PROVENANCE_CORPUS_V1",
   "frozen_at": "2026-10-24",
-  "tool_commit": "d763ad6",
+  "tool_commit": "09c0713eabcf0a29688b35fdad2a0a7db4f2b22a",
   "selection_rule": "Subset of R02_AGP_CORPUS_V1 frozen SHAs. Do not remove failures. Source-only checkouts unless noted.",
   "repos": [
     {
