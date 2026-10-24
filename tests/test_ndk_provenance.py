@@ -251,8 +251,32 @@ def test_dependency_prunes_nested_node_modules_and_build(tmp_path):
     assert values == {"1.2.3"}
 
 
+def test_packages_without_shallow_gradle_marker_are_not_deep_walked(tmp_path):
+    repo = _android_repo(tmp_path)
+    junk = repo / "node_modules" / "debugger-frontend"
+    deep = junk / "dist" / "nested"
+    deep.mkdir(parents=True)
+    (deep / "build.gradle").write_text('ndkVersion "9.9.9"\n', encoding="utf-8")
+    (junk / "package.json").write_text('{"name":"debugger-frontend"}', encoding="utf-8")
+    _write_dependency(
+        repo,
+        "react-native-safe-area-context",
+        "ndkVersion rootProject.ext.ndkVersion\n",
+    )
+    owners = {d.owner for d in trace_ndk(str(repo)).declarations}
+    assert "debugger-frontend" not in owners
+    assert "react-native-safe-area-context" in owners
+
+
 def test_glob_star_slash_star_does_not_erase_ndk_lines(tmp_path):
     repo = _android_repo(tmp_path)
+    _write_dependency(
+        repo,
+        "hermes-like",
+        "// sibling marker file for shallow discovery gate\n",
+        kotlin=True,
+        gradle_relpath="ReactAndroid/build.gradle.kts",
+    )
     _write_dependency(
         repo,
         "hermes-like",

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -28,6 +29,7 @@ PROJECT_GRADLE_FILES = (
 )
 PACKAGE_GRADLE_MAX_DEPTH = 16
 PACKAGE_GRADLE_PRUNE_DIRS = frozenset({"node_modules", "build", ".gradle"})
+GRADLE_FILE_NAMES = frozenset({"build.gradle", "build.gradle.kts"})
 
 ATTENTION_LITERAL_DIFF = "dependency_literal_pin_differs_from_project"
 
@@ -167,6 +169,8 @@ def _scan_gradle_file(
         return []
     if content is None:
         return []
+    if "ndkVersion" not in content:
+        return []
     return _parse_ndk_lines(content, owner=owner, owner_type=owner_type, source=rel)
 
 
@@ -198,6 +202,44 @@ def _package_name(package_root: Path) -> str | None:
     return name if isinstance(name, str) and name.strip() else None
 
 
+def _package_shallow_gradle_marker(package_root: Path) -> bool:
+    """Cheap gate before deep Gradle discovery (no semver-specific paths)."""
+    try:
+        root = package_root.resolve(strict=False)
+    except OSError:
+        return False
+    for name in GRADLE_FILE_NAMES:
+        candidate = root / name
+        if candidate.is_file() and not candidate.is_symlink():
+            return True
+    android = root / "android"
+    if android.is_dir() and not android.is_symlink():
+        for name in GRADLE_FILE_NAMES:
+            candidate = android / name
+            if candidate.is_file() and not candidate.is_symlink():
+                return True
+    try:
+        entries = sorted(root.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        return False
+    for entry in entries:
+        if entry.is_symlink() or not entry.is_dir():
+            continue
+        if entry.name in PACKAGE_GRADLE_PRUNE_DIRS or entry.name.startswith("."):
+            continue
+        for name in GRADLE_FILE_NAMES:
+            candidate = entry / name
+            if candidate.is_file() and not candidate.is_symlink():
+                return True
+        nested_android = entry / "android"
+        if nested_android.is_dir() and not nested_android.is_symlink():
+            for name in GRADLE_FILE_NAMES:
+                candidate = nested_android / name
+                if candidate.is_file() and not candidate.is_symlink():
+                    return True
+    return False
+
+
 def _discover_package_gradle_files(package_root: Path) -> list[Path]:
     try:
         root = package_root.resolve(strict=False)
@@ -209,25 +251,23 @@ def _discover_package_gradle_files(package_root: Path) -> list[Path]:
         if depth > PACKAGE_GRADLE_MAX_DEPTH:
             return
         try:
-            entries = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+            with os.scandir(directory) as scan:
+                entries = sorted(scan, key=lambda item: item.name.lower())
         except OSError:
             return
         for entry in entries:
             if entry.is_symlink():
                 continue
-            try:
-                entry.relative_to(root)
-            except ValueError:
+            name = entry.name
+            if entry.is_file(follow_symlinks=False):
+                if name in GRADLE_FILE_NAMES:
+                    found.append(Path(entry.path))
                 continue
-            if entry.is_file():
-                if entry.name in ("build.gradle", "build.gradle.kts"):
-                    found.append(entry)
+            if not entry.is_dir(follow_symlinks=False):
                 continue
-            if not entry.is_dir():
+            if name in PACKAGE_GRADLE_PRUNE_DIRS or name.startswith("."):
                 continue
-            if entry.name in PACKAGE_GRADLE_PRUNE_DIRS or entry.name.startswith("."):
-                continue
-            walk(entry, depth + 1)
+            walk(Path(entry.path), depth + 1)
 
     walk(root, 0)
     return sorted(found, key=lambda path: path.relative_to(root).as_posix().lower())
@@ -271,10 +311,15 @@ def _collect_dependency_declarations(repo: Path, project: Path) -> list[NdkDecla
     for base in _node_modules_bases(repo, project):
         node_modules = base / "node_modules"
         for package_root in _iter_installed_packages(node_modules):
+            if not _package_shallow_gradle_marker(package_root):
+                continue
+            gradle_paths = _discover_package_gradle_files(package_root)
+            if not gradle_paths:
+                continue
             owner = _package_name(package_root)
             if owner is None:
                 continue
-            for gradle_path in _discover_package_gradle_files(package_root):
+            for gradle_path in gradle_paths:
                 rel = _relative_source(repo, gradle_path)
                 if rel in seen_sources:
                     continue
