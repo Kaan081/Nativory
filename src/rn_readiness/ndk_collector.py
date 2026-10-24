@@ -470,8 +470,10 @@ def _scan_gradle_file(
         return []
     try:
         content = _safe_read(gradle_path)
-    except OSError:
-        return []
+    except OSError as error:
+        raise OSError(
+            f"Cannot inspect NDK Gradle source {rel}: {error}"
+        ) from error
     if content is None:
         return []
     if "ndkVersion" not in content:
@@ -686,6 +688,14 @@ def trace_ndk(path: str | Path) -> NdkTraceResult:
     repo = Path(path).expanduser().resolve()
     if not repo.is_dir():
         raise ProjectInputError(f"Not an accessible directory: {path}")
+    root_markers = (
+        "build.gradle", "build.gradle.kts",
+        "settings.gradle", "settings.gradle.kts",
+    )
+    if not (repo / "android").is_dir() and not any(
+        (repo / name).is_file() for name in root_markers
+    ):
+        raise ProjectInputError("No Android project structure found")
     project = project_android_root(repo)
     declarations = _collect_project_declarations(repo, project)
     declarations.extend(_collect_dependency_declarations(repo, project))

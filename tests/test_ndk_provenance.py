@@ -715,3 +715,38 @@ def test_package_traversal_containment_skips_escape(tmp_path):
     blob = to_json(result)
     assert str(tmp_path) not in blob
     assert "outside" not in blob or "99.0.0" not in blob
+
+
+def test_ndk_scan_known_oversized_source_is_not_silent(tmp_path, capsys):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo, 'ndkVersion "27.1.12297006"\n' + "x" * 1_000_100
+    )
+    assert main(["trace-ndk", str(repo), "--json"]) == 4
+    assert "android/build.gradle" in capsys.readouterr().err
+
+
+def test_ndk_scan_rejects_non_android_input(tmp_path, capsys):
+    repo = tmp_path / "empty"
+    repo.mkdir()
+    assert main(["trace-ndk", str(repo), "--json"]) == 4
+    assert "INPUT ERROR" in capsys.readouterr().err
+
+
+def test_ndk_scan_valid_project_without_declaration_remains_empty_success(
+    tmp_path, capsys
+):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(repo, 'plugins { id "com.android.application" }\n')
+    assert main(["trace-ndk", str(repo), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["declarations"] == []
+
+def test_ndk_scan_known_oversized_dependency_not_silent(tmp_path, capsys):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(repo, 'ndkVersion "27.1.12297006"\n')
+    _write_dependency(
+        repo, "oversized-lib",
+        'ndkVersion "26.0.0"\n' + "x" * 1_000_100
+    )
+    assert main(["trace-ndk", str(repo), "--json"]) == 4
+    assert "node_modules/oversized-lib/android/build.gradle" in capsys.readouterr().err
