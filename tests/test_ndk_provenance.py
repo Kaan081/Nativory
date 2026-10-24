@@ -466,6 +466,145 @@ def test_package_json_bom_and_non_dict_safe(tmp_path):
     assert trace_ndk(str(repo)).declarations == ()
 
 
+def test_has_property_pad_preserves_coordinate_space_no_comment_fabrication(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        'x.hasProperty("ndkVersion"); a = 1; b = 2; c = 3 // ndkVersion "99.0.0"\n',
+    )
+    assert trace_ndk(str(repo)).declarations == ()
+
+
+def test_has_property_pad_allows_real_decl_after_comment_segment(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        'x.hasProperty("ndkVersion") ; ndkVersion "27.0.0" ; /* ndkVersion "99.0.0" */\n',
+    )
+    result = trace_ndk(str(repo))
+    assert len(result.declarations) == 1
+    assert result.declarations[0].value == "27.0.0"
+
+
+def test_local_ndk_bindings_never_emit(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        'android { val ndkVersion = "27.0.0" }\n'
+        'afterEvaluate { String ndkVersion = "1.2.3" }\n'
+        'String ndkVersion = "27.0.0"\n'
+        'final def ndkVersion = "27.0.0"\n'
+        'const val ndkVersion = "27.0.0"\n'
+        'private val ndkVersion = "27.0.0"\n',
+        kotlin=True,
+    )
+    assert trace_ndk(str(repo)).declarations == ()
+
+
+def test_reads_comparisons_and_map_keys_never_emit(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        'if (a && ndkVersion == "27") { }\n'
+        'x = ndkVersion ?: "26"\n'
+        "compileSdk = ndkVersion.toInteger()\n"
+        "foo(a, ndkVersion)\n"
+        "y = c ? ndkVersion : o\n"
+        'ndkVersion == "27.1.1"\n'
+        'ndkVersion != "27.1.1"\n'
+        'ndkVersion += "27.1.1"\n'
+        'ndkVersion: "27.0.0"\n'
+        'foo(\n    ndkVersion: "27.0.0"\n)\n',
+    )
+    assert trace_ndk(str(repo)).declarations == ()
+
+
+def test_trailing_comments_keep_literal_and_root_inherited(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        'ndkVersion "27.1.1" // pinned\n'
+        'ndkVersion "28.0.0" /* pinned */\n'
+        "ndkVersion rootProject.ext.ndkVersion // inherited\n",
+    )
+    result = trace_ndk(str(repo))
+    kinds = {d.resolution_kind for d in result.declarations}
+    assert NdkResolutionKind.LITERAL in kinds
+    assert NdkResolutionKind.ROOT_INHERITED in kinds
+    for item in result.declarations:
+        assert "//" not in item.resolution_path[-1]
+        assert "/*" not in item.resolution_path[-1]
+
+
+def test_unmatched_quote_line_does_not_hide_next_line(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        'def r = /"/\n'
+        'ndkVersion "27.1.1"\n',
+    )
+    result = trace_ndk(str(repo))
+    assert len(result.declarations) == 1
+    assert result.declarations[0].value == "27.1.1"
+
+
+def test_ext_block_ndk_literal_single_and_multiline_same(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(repo, 'ext { ndkVersion = "28.0.0" }\n')
+    single = trace_ndk(str(repo)).declarations
+    _write_project_gradle(
+        repo,
+        "ext {\n    ndkVersion = \"28.0.0\"\n}\n",
+    )
+    multi = trace_ndk(str(repo)).declarations
+    assert len(single) == len(multi) == 1
+    assert single[0].resolution_kind == multi[0].resolution_kind == NdkResolutionKind.LITERAL
+    assert single[0].value == multi[0].value == "28.0.0"
+
+
+def test_ext_map_entry_still_no_declaration(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(repo, 'ext { cfg = [ndkVersion: "27.0.0"] }\n')
+    assert trace_ndk(str(repo)).declarations == ()
+
+
+def test_attention_signal_skips_example_app_paths(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(repo, 'ndkVersion "27.1.12297006"\n')
+    ex = repo / "node_modules" / "lib" / "example" / "android" / "app"
+    ex.mkdir(parents=True)
+    (repo / "node_modules" / "lib" / "package.json").write_text('{"name":"lib"}', encoding="utf-8")
+    (ex / "build.gradle").write_text('ndkVersion "21.0.0"\n', encoding="utf-8")
+    result = trace_ndk(str(repo))
+    assert any(d.source.endswith("example/android/app/build.gradle") for d in result.declarations)
+    assert result.attention_signals == ()
+
+
+def test_junction_package_outside_node_modules_is_skipped(tmp_path):
+    import subprocess
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("Windows junction test")
+    outside = tmp_path / "outside_pkg"
+    (outside / "android").mkdir(parents=True)
+    (outside / "package.json").write_text('{"name":"evil-outside"}', encoding="utf-8")
+    (outside / "android" / "build.gradle").write_text('ndkVersion "99.0.0"\n', encoding="utf-8")
+    repo = _android_repo(tmp_path)
+    (repo / "node_modules").mkdir(exist_ok=True)
+    link = repo / "node_modules" / "evil"
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        pytest.skip(f"junction creation unavailable: {proc.stderr.strip()}")
+    result = trace_ndk(str(repo))
+    assert not any(d.owner == "evil-outside" for d in result.declarations)
+    assert not any(d.value == "99.0.0" for d in result.declarations)
+
+
 def test_package_traversal_containment_skips_escape(tmp_path):
     if not hasattr(Path, "symlink_to"):
         pytest.skip("symlinks unavailable")

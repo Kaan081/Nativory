@@ -25,7 +25,9 @@ def to_dict(result: NdkTraceResult) -> dict:
         "attention_signals": list(result.attention_signals),
         "limitations": [
             "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
-            "Different literal NDK pins across project and dependencies are observations, not build failures.",
+            "Different literal NDK pins across project and dependencies are observed declaration "
+            "differences only; they are not proof of effective Gradle build selection or participation.",
+            "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
             "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
             "No Gradle execution, Node resolution, network access, or build graph evaluation was performed.",
         ],

@@ -18,11 +18,15 @@ NDK_ROOT_PROPERTIES = re.compile(
     r'(?<![.\w])ndkVersion\s*=\s*rootProject\.properties\s*\[\s*["\']ndkVersion["\']\s*\]\.toString\s*\(\s*\)',
 )
 NDK_ASSIGN = re.compile(r"(?<![.\w])ndkVersion\s*(?:=\s*)?(.+)$")
-NON_DECL_PREFIX = re.compile(
-    r"^\s*(?:println|logger\.|ext\s*\{|val\s|def\s|var\s|subprojects\b)",
-)
-LOCAL_NDK_DEF = re.compile(r"^\s*(?:val|def|var)\s+ndkVersion\b")
+NON_DECL_PREFIX = re.compile(r"^\s*(?:println|logger\.|subprojects\b)")
 MAP_NDK_ENTRY = re.compile(r"\[\s*ndkVersion\s*:")
+HAS_PROPERTY_TOKEN = re.compile(
+    r'\b(?:hasProperty|findProperty)\s*\(\s*["\']ndkVersion["\']\s*\)',
+)
+LOCAL_DECL_BEFORE_NDK = re.compile(
+    r"(?:^|[\s{;])(?:(?:public|private|protected|final|const|static)\s+)*"
+    r"(?:val|var|def|[A-Z][\w]*)\s+$",
+)
 
 PROJECT_GRADLE_FILES = (
     "build.gradle",
@@ -35,6 +39,9 @@ PACKAGE_GRADLE_PRUNE_DIRS = frozenset({"node_modules", "build", ".gradle"})
 GRADLE_FILE_NAMES = frozenset({"build.gradle", "build.gradle.kts"})
 
 ATTENTION_LITERAL_DIFF = "dependency_literal_pin_differs_from_project"
+FIXTURE_SOURCE_PARTS = frozenset({
+    "example", "examples", "sample", "samples", "demo", "demos", "test", "tests",
+})
 
 
 def _declaration_sort_key(item: NdkDeclaration) -> tuple[str, str, str, str, str]:
@@ -112,6 +119,10 @@ def _mask_non_code(content: str) -> str:
                 i += 1
             continue
         if state == "double":
+            if ch == "\n":
+                state = "code"
+                i += 1
+                continue
             if ch == "\\" and i + 1 < n:
                 blank(i, i + 2)
                 i += 2
@@ -126,6 +137,10 @@ def _mask_non_code(content: str) -> str:
             i += 1
             continue
         if state == "single":
+            if ch == "\n":
+                state = "code"
+                i += 1
+                continue
             if ch == "\\" and i + 1 < n:
                 blank(i, i + 2)
                 i += 2
@@ -163,12 +178,8 @@ def _mask_non_code(content: str) -> str:
     return "".join(out)
 
 
-def _strip_has_property_tokens(line: str) -> str:
-    return re.sub(
-        r'\b(?:hasProperty|findProperty)\s*\(\s*["\']ndkVersion["\']\s*\)',
-        "",
-        line,
-    )
+def _pad_has_property_tokens(line: str) -> str:
+    return HAS_PROPERTY_TOKEN.sub(lambda match: " " * (match.end() - match.start()), line)
 
 
 def _tail_is_clean_statement_end(tail: str) -> bool:
@@ -181,10 +192,37 @@ def _tail_is_clean_statement_end(tail: str) -> bool:
 def _lhs_ndk_position(segment: str) -> int | None:
     for match in NDK_LHS.finditer(segment):
         start = match.start()
-        if start > 0 and segment[start - 1] in "(.[\"'":
+        if start > 0 and segment[start - 1] in "(.[\"',:":
             continue
         return start
     return None
+
+
+def _is_local_ndk_binding(segment: str, lhs_at: int) -> bool:
+    prefix = segment[:lhs_at]
+    if LOCAL_DECL_BEFORE_NDK.search(prefix):
+        return True
+    after = segment[lhs_at + len("ndkVersion"):]
+    return re.match(r"\s*:\s*\w+", after) is not None
+
+
+def _valid_dsl_lhs(segment: str, lhs_at: int) -> bool:
+    if _is_local_ndk_binding(segment, lhs_at):
+        return False
+    after = segment[lhs_at + len("ndkVersion"):].lstrip()
+    if not after:
+        return False
+    if after[0] == ":":
+        return False
+    if re.match(r"(?:==|!=|\+=|-=|\?=)", after):
+        return False
+    if after[0] in "?.)":
+        return False
+    if after.startswith("."):
+        return False
+    if after.startswith("="):
+        return not after.startswith("==")
+    return True
 
 
 def _span_is_code(content: str, masked: str, start: int, end: int) -> bool:
@@ -208,95 +246,93 @@ def _parse_ndk_lines(
     line_start = 0
     for raw_line in content.splitlines():
         line_end = line_start + len(raw_line)
-        working_line = _strip_has_property_tokens(raw_line)
-        line = working_line.strip()
-        if not line or not NDK_LHS.search(line):
+        working_line = _pad_has_property_tokens(raw_line)
+        if not working_line.strip() or not NDK_LHS.search(working_line):
             line_start = line_end + 1
             continue
-        if NON_DECL_PREFIX.match(line) or LOCAL_NDK_DEF.match(line) or MAP_NDK_ENTRY.search(line):
+        if NON_DECL_PREFIX.match(working_line.strip()) or MAP_NDK_ENTRY.search(working_line):
             line_start = line_end + 1
             continue
 
-        for segment in line.split(";"):
+        search_from = 0
+        for segment in working_line.strip().split(";"):
             segment = segment.strip()
+            if not segment:
+                continue
             lhs_at = _lhs_ndk_position(segment)
-            if lhs_at is None:
+            if lhs_at is None or not _valid_dsl_lhs(segment, lhs_at):
                 continue
             decl = segment[lhs_at:]
-            lhs_in_working = working_line.find(segment)
-            if lhs_in_working < 0:
-                lhs_in_working = working_line.find("ndkVersion", 0)
-            decl_offset = line_start + lhs_in_working + lhs_at
-            if lhs_in_working < 0:
-                decl_offset = line_start + lhs_at
-
-            def _code_span(start: int, end: int) -> bool:
-                abs_start = decl_offset + start
-                abs_end = decl_offset + end
-                return _span_is_code(content, masked, abs_start, abs_end)
+            seg_offset = working_line.find(segment, search_from)
+            if seg_offset < 0:
+                seg_offset = working_line.find("ndkVersion", search_from)
+            if seg_offset < 0:
+                continue
+            search_from = seg_offset + max(len(segment), 1)
+            decl_base = line_start + seg_offset + lhs_at
+            decl_masked = masked[decl_base:decl_base + len(decl)]
 
             def _lhs_in_code(match_start: int) -> bool:
-                return _code_span(match_start, match_start + len("ndkVersion"))
+                abs_start = decl_base + match_start
+                abs_end = abs_start + len("ndkVersion")
+                return _span_is_code(content, masked, abs_start, abs_end)
+
+            def _tail_ok(match_end: int) -> bool:
+                return _tail_is_clean_statement_end(decl_masked[match_end:])
 
             match = NDK_LITERAL.search(decl) or NDK_INVOKE_LITERAL.search(decl)
             if match and not _lhs_in_code(match.start()):
                 match = None
-            if match:
-                tail = decl[match.end():]
-                if _tail_is_clean_statement_end(tail):
-                    value = match.group(1)
-                    kind = NdkResolutionKind.LITERAL
-                    if not NDK_NUMERIC.fullmatch(value):
-                        kind = NdkResolutionKind.UNSUPPORTED_EXPRESSION
-                        value = None
-                    declarations.append(NdkDeclaration(
-                        owner=owner,
-                        owner_type=owner_type,
-                        source=source,
-                        value=value if kind is NdkResolutionKind.LITERAL else None,
-                        resolution_kind=kind,
-                        resolution_path=("ndkVersion", "literal"),
-                    ))
-                    continue
+            if match and _tail_ok(match.end()):
+                value = match.group(1)
+                kind = NdkResolutionKind.LITERAL
+                if not NDK_NUMERIC.fullmatch(value):
+                    kind = NdkResolutionKind.UNSUPPORTED_EXPRESSION
+                    value = None
+                declarations.append(NdkDeclaration(
+                    owner=owner,
+                    owner_type=owner_type,
+                    source=source,
+                    value=value if kind is NdkResolutionKind.LITERAL else None,
+                    resolution_kind=kind,
+                    resolution_path=("ndkVersion", "literal"),
+                ))
+                continue
 
             match = NDK_ROOT_PROPERTIES.search(decl)
             if match and not _lhs_in_code(match.start()):
                 match = None
-            if match:
-                tail = decl[match.end():]
-                if _tail_is_clean_statement_end(tail):
-                    declarations.append(NdkDeclaration(
-                        owner=owner,
-                        owner_type=owner_type,
-                        source=source,
-                        value=None,
-                        resolution_kind=NdkResolutionKind.ROOT_INHERITED,
-                        resolution_path=("ndkVersion", 'rootProject.properties["ndkVersion"].toString()'),
-                    ))
-                    continue
+            if match and _tail_ok(match.end()):
+                declarations.append(NdkDeclaration(
+                    owner=owner,
+                    owner_type=owner_type,
+                    source=source,
+                    value=None,
+                    resolution_kind=NdkResolutionKind.ROOT_INHERITED,
+                    resolution_path=("ndkVersion", 'rootProject.properties["ndkVersion"].toString()'),
+                ))
+                continue
 
             match = NDK_ROOT.search(decl)
             if match and not _lhs_in_code(match.start()):
                 match = None
-            if match:
-                tail = decl[match.end():]
-                if _tail_is_clean_statement_end(tail):
-                    declarations.append(NdkDeclaration(
-                        owner=owner,
-                        owner_type=owner_type,
-                        source=source,
-                        value=None,
-                        resolution_kind=NdkResolutionKind.ROOT_INHERITED,
-                        resolution_path=("ndkVersion", "rootProject.ext.ndkVersion"),
-                    ))
-                    continue
+            if match and _tail_ok(match.end()):
+                declarations.append(NdkDeclaration(
+                    owner=owner,
+                    owner_type=owner_type,
+                    source=source,
+                    value=None,
+                    resolution_kind=NdkResolutionKind.ROOT_INHERITED,
+                    resolution_path=("ndkVersion", "rootProject.ext.ndkVersion"),
+                ))
+                continue
 
             assign = NDK_ASSIGN.search(decl)
             if assign and not _lhs_in_code(assign.start()):
                 assign = None
             if not assign:
                 continue
-            expr = assign.group(1).strip().rstrip("}")
+            expr = decl_masked[assign.start(1):assign.end(1)].strip().rstrip("}")
             if not expr:
                 continue
             if re.fullmatch(r'["\'][^"\']+["\'](?:\s*[;}]|\s*)', expr):
@@ -373,10 +409,22 @@ def _resolved_within(resolved: Path, root: Path) -> bool:
         return False
 
 
-def _discover_package_gradle_files(package_root: Path) -> list[Path]:
+def _resolved_node_modules_in_repo(repo: Path) -> Path | None:
+    try:
+        repo_resolved = repo.resolve(strict=False)
+        nm_resolved = (repo / "node_modules").resolve(strict=False)
+        nm_resolved.relative_to(repo_resolved)
+    except (OSError, ValueError):
+        return None
+    return nm_resolved
+
+
+def _discover_package_gradle_files(package_root: Path, nm_boundary: Path) -> list[Path]:
     try:
         root = package_root.resolve(strict=False)
     except OSError:
+        return []
+    if not _resolved_within(root, nm_boundary):
         return []
     found: list[Path] = []
 
@@ -387,7 +435,7 @@ def _discover_package_gradle_files(package_root: Path) -> list[Path]:
             resolved_dir = directory.resolve(strict=False)
         except OSError:
             return
-        if not _resolved_within(resolved_dir, root):
+        if not _resolved_within(resolved_dir, nm_boundary):
             return
         try:
             with os.scandir(resolved_dir) as scan:
@@ -402,7 +450,7 @@ def _discover_package_gradle_files(package_root: Path) -> list[Path]:
                 resolved_entry = Path(entry.path).resolve(strict=False)
             except OSError:
                 continue
-            if not _resolved_within(resolved_entry, root):
+            if not _resolved_within(resolved_entry, nm_boundary):
                 continue
             if entry.is_file(follow_symlinks=False):
                 if name in GRADLE_FILE_NAMES:
@@ -415,21 +463,43 @@ def _discover_package_gradle_files(package_root: Path) -> list[Path]:
             walk(resolved_entry, depth + 1)
 
     walk(root, 0)
-    return sorted(found, key=lambda path: path.relative_to(root).as_posix().lower())
+    try:
+        return sorted(found, key=lambda path: path.relative_to(root).as_posix().lower())
+    except ValueError:
+        return []
 
 
-def _iter_installed_packages(node_modules: Path) -> list[Path]:
-    if not node_modules.is_dir() or node_modules.is_symlink():
+def _iter_installed_packages(node_modules: Path, nm_boundary: Path) -> list[Path]:
+    if not node_modules.is_dir():
+        return []
+    try:
+        if not _resolved_within(node_modules.resolve(strict=False), nm_boundary):
+            return []
+    except OSError:
         return []
     packages: list[Path] = []
     for entry in sorted(node_modules.iterdir(), key=lambda item: item.name.lower()):
-        if entry.name.startswith(".") or entry.is_symlink():
+        if entry.name.startswith("."):
+            continue
+        if entry.is_symlink():
+            continue
+        try:
+            resolved = entry.resolve(strict=False)
+        except OSError:
+            continue
+        if not _resolved_within(resolved, nm_boundary):
             continue
         if entry.name.startswith("@"):
             if not entry.is_dir():
                 continue
             for scoped in sorted(entry.iterdir(), key=lambda item: item.name.lower()):
-                if scoped.is_dir() and not scoped.is_symlink():
+                if not scoped.is_dir() or scoped.is_symlink():
+                    continue
+                try:
+                    scoped_resolved = scoped.resolve(strict=False)
+                except OSError:
+                    continue
+                if _resolved_within(scoped_resolved, nm_boundary):
                     packages.append(scoped)
             continue
         if entry.is_dir():
@@ -456,9 +526,17 @@ def _collect_project_declarations(repo: Path, project: Path) -> list[NdkDeclarat
 def _collect_dependency_declarations(repo: Path, project: Path) -> list[NdkDeclaration]:
     declarations: list[NdkDeclaration] = []
     seen_sources: set[str] = set()
+    nm_boundary = _resolved_node_modules_in_repo(repo)
+    if nm_boundary is None:
+        return []
     node_modules = repo / "node_modules"
-    for package_root in _iter_installed_packages(node_modules):
-        gradle_paths = _discover_package_gradle_files(package_root)
+    for package_root in _iter_installed_packages(node_modules, nm_boundary):
+        try:
+            if not _resolved_within(package_root.resolve(strict=False), nm_boundary):
+                continue
+        except OSError:
+            continue
+        gradle_paths = _discover_package_gradle_files(package_root, nm_boundary)
         if not gradle_paths:
             continue
         owner = _package_name(package_root)
@@ -478,6 +556,10 @@ def _collect_dependency_declarations(repo: Path, project: Path) -> list[NdkDecla
     return declarations
 
 
+def _is_fixture_dependency_source(source: str) -> bool:
+    return any(part.lower() in FIXTURE_SOURCE_PARTS for part in source.split("/"))
+
+
 def _attention_signals(declarations: list[NdkDeclaration]) -> list[str]:
     project_literals = sorted({
         item.value
@@ -494,6 +576,8 @@ def _attention_signals(declarations: list[NdkDeclaration]) -> list[str]:
         if item.owner_type is not NdkOwnerType.INSTALLED_DEPENDENCY:
             continue
         if item.resolution_kind is not NdkResolutionKind.LITERAL or item.value is None:
+            continue
+        if _is_fixture_dependency_source(item.source):
             continue
         if item.value != project_value and ATTENTION_LITERAL_DIFF not in signals:
             signals.append(ATTENTION_LITERAL_DIFF)
