@@ -1,0 +1,382 @@
+{
+  "corpus_freeze_tool_commit": "09c0713eabcf0a29688b35fdad2a0a7db4f2b22a",
+  "corpus_id": "NDK_PROVENANCE_CORPUS_V2",
+  "frozen_at": "2026-10-24",
+  "results": [
+    {
+      "node_modules_present": false,
+      "repo": "react-native-community/template",
+      "scan_subdir": "template",
+      "sha": "fe29a9ad1344af52e787cd0fa3a5b707d631bb85",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "root_inherited",
+            "resolution_path": [
+              "ndkVersion",
+              "rootProject.ext.ndkVersion"
+            ],
+            "source": "android/app/build.gradle",
+            "value": null
+          },
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "28.2.13676358"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "mattermost/mattermost-mobile",
+      "scan_subdir": "",
+      "sha": "726cd9865d4b2c0040853e9c364fa6365791dbb1",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "root_inherited",
+            "resolution_path": [
+              "ndkVersion",
+              "rootProject.ext.ndkVersion"
+            ],
+            "source": "android/app/build.gradle",
+            "value": null
+          },
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "27.1.12297006"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "MetaMask/metamask-mobile",
+      "scan_subdir": "",
+      "sha": "0c61213714554680d5421af337b72f89e0f72f7d",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "root_inherited",
+            "resolution_path": [
+              "ndkVersion",
+              "rootProject.ext.ndkVersion"
+            ],
+            "source": "android/app/build.gradle",
+            "value": null
+          },
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "27.1.12297006"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "zulip/zulip-mobile",
+      "scan_subdir": "",
+      "sha": "d7cf6da79b4b9467e240b42f24330e97390a8aff",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "24.0.8215888"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "react-native-maps/react-native-maps",
+      "scan_subdir": "",
+      "sha": "39c6fd177d6c91ea087fcf083fd484f2499b6ea8",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "root_inherited",
+            "resolution_path": [
+              "ndkVersion",
+              "rootProject.ext.ndkVersion"
+            ],
+            "source": "android/build.gradle",
+            "value": null
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "software-mansion/react-native-reanimated",
+      "scan_subdir": "apps/fabric-example",
+      "sha": "ca7c3fbc2879c976e19e41bf2c6206042becf154",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "root_inherited",
+            "resolution_path": [
+              "ndkVersion",
+              "rootProject.ext.ndkVersion"
+            ],
+            "source": "android/app/build.gradle",
+            "value": null
+          },
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "27.1.12297006"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "react/react-native",
+      "scan_subdir": "",
+      "sha": "a443ea471c2d7676e6bc42222ddf8a960944ac42",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "RocketChat/Rocket.Chat.ReactNative",
+      "scan_subdir": "",
+      "sha": "a08ab04b98021737c119aea9978c85fdecc4c6cc",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "root_inherited",
+            "resolution_path": [
+              "ndkVersion",
+              "rootProject.ext.ndkVersion"
+            ],
+            "source": "android/app/build.gradle",
+            "value": null
+          },
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "27.1.12297006"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "jitsi/jitsi-meet",
+      "scan_subdir": "",
+      "sha": "8a85912a0424ac2dd159853c242630bd11760701",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "27.1.12297006"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    },
+    {
+      "node_modules_present": false,
+      "repo": "BlueWallet/BlueWallet",
+      "scan_subdir": "",
+      "sha": "55df7d2c4385080b42b39333ad3b2faf5d01400e",
+      "trace": {
+        "attention_signals": [],
+        "declarations": [
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "root_inherited",
+            "resolution_path": [
+              "ndkVersion",
+              "rootProject.ext.ndkVersion"
+            ],
+            "source": "android/app/build.gradle",
+            "value": null
+          },
+          {
+            "owner": "project",
+            "owner_type": "project",
+            "resolution_kind": "literal",
+            "resolution_path": [
+              "ndkVersion",
+              "literal"
+            ],
+            "source": "android/build.gradle",
+            "value": "28.2.13676358"
+          }
+        ],
+        "limitations": [
+          "This command traces NDK declaration provenance only; it does not evaluate NDK compatibility.",
+          "Different literal NDK pins across project and dependencies are observed declaration differences only; they are not proof of effective Gradle build selection or participation.",
+          "Attention signals exclude common example/sample/demo/test paths inside dependency trees.",
+          "root_inherited and unsupported_expression entries do not claim an effective NDK version.",
+          "No Gradle execution, Node resolution, network access, or build graph evaluation was performed."
+        ],
+        "schema_version": "0.1-ndk-provenance",
+        "scope": "NDK_PROVENANCE_TRACE",
+        "tool_version": "0.1.3"
+      }
+    }
+  ],
+  "tool_commit": "3ff9e8635ca69700f49c12c74a5a59fd7c569d7e"
+}
