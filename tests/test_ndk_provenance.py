@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from rn_readiness.cli import main
-from rn_readiness.ndk_collector import trace_ndk
+from rn_readiness.ndk_collector import _parse_ndk_lines, trace_ndk
 from rn_readiness.ndk_models import NdkOwnerType, NdkResolutionKind
 from rn_readiness.ndk_report import to_json
 from rn_readiness.cli import run as scan_run
@@ -578,6 +578,94 @@ def test_attention_signal_skips_example_app_paths(tmp_path):
     result = trace_ndk(str(repo))
     assert any(d.source.endswith("example/android/app/build.gradle") for d in result.declarations)
     assert result.attention_signals == ()
+
+
+def test_round3_h1_reads_and_named_args_emit_nothing(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        "foo(a, ndkVersion, b)\n"
+        "foo(\n  compileSdk,\n  ndkVersion,\n  target\n)\n"
+        'x = "v=" + ndkVersion + "!"\n'
+        'if (x == ndkVersion && y) { }\n'
+        "x = [a, ndkVersion]\n"
+        "def ok = a || ndkVersion || b\n"
+        'return ndkVersion + "x"\n'
+        'Log.d("t", ndkVersion + 1)\n'
+        "mapOf(\n  ndkVersion to \"27\"\n)\n"
+        'configure(compileSdk = 34, ndkVersion = "27.0.0")\n',
+    )
+    assert trace_ndk(str(repo)).declarations == ()
+
+
+def test_round3_h1_get_ext_or_default_still_unsupported(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(repo, 'android { ndkVersion getExtOrDefault("ndkVersion") }\n')
+    item = trace_ndk(str(repo)).declarations[0]
+    assert item.resolution_kind is NdkResolutionKind.UNSUPPORTED_EXPRESSION
+
+
+def test_round3_m1_nested_kts_comment_no_fabrication(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        "/* a /* b */\nndkVersion \"99.0.0\"\n*/\nndkVersion \"27.1.1\"\n",
+        kotlin=True,
+    )
+    result = trace_ndk(str(repo))
+    assert len(result.declarations) == 1
+    assert result.declarations[0].value == "27.1.1"
+
+
+def test_round3_m1_groovy_non_nested_comment_behavior(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        "/* a /* b */\nndkVersion \"99.0.0\"\n*/\nndkVersion \"27.1.1\"\n",
+        kotlin=False,
+    )
+    result = trace_ndk(str(repo))
+    assert any(d.value == "27.1.1" for d in result.declarations)
+
+
+def test_round3_m2_cross_line_continuations_are_unsupported(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        "ndkVersion = rootProject.ext.ndkVersion\n    ?: \"26.1.1\"\n"
+        "ndkVersion = rootProject.ext.ndkVersion\n    .replace(\"a\",\"b\")\n"
+        'ndkVersion = "27.1.1"\n    .replace("2","3")\n'
+        'ndkVersion = rootProject.properties["ndkVersion"].toString()\n    .trim()\n',
+    )
+    content = (repo / "android" / "build.gradle").read_text(encoding="utf-8")
+    declarations = _parse_ndk_lines(
+        content,
+        owner="project",
+        owner_type=NdkOwnerType.PROJECT,
+        source="android/build.gradle",
+    )
+    kinds = [d.resolution_kind for d in declarations]
+    assert kinds == [NdkResolutionKind.UNSUPPORTED_EXPRESSION] * 4
+    assert all(d.resolution_path[-1] == "continued_expression" for d in declarations)
+
+
+def test_round3_m3_typed_locals_emit_nothing(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(
+        repo,
+        'List<String> ndkVersion = "27.0.0"\n'
+        'java.lang.String ndkVersion = "27.0.0"\n'
+        'int ndkVersion = "27.0.0"\n'
+        'String[] ndkVersion = "27.0.0"\n',
+        kotlin=True,
+    )
+    assert trace_ndk(str(repo)).declarations == ()
+
+
+def test_round3_conditional_command_literal_preserved(tmp_path):
+    repo = _android_repo(tmp_path)
+    _write_project_gradle(repo, 'if (rootProject.hasProperty("ndkVersion")) ndkVersion "27.0.0"\n')
+    assert trace_ndk(str(repo)).declarations[0].value == "27.0.0"
 
 
 def test_junction_package_outside_node_modules_is_skipped(tmp_path):

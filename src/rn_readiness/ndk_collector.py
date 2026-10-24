@@ -23,10 +23,11 @@ MAP_NDK_ENTRY = re.compile(r"\[\s*ndkVersion\s*:")
 HAS_PROPERTY_TOKEN = re.compile(
     r'\b(?:hasProperty|findProperty)\s*\(\s*["\']ndkVersion["\']\s*\)',
 )
-LOCAL_DECL_BEFORE_NDK = re.compile(
-    r"(?:^|[\s{;])(?:(?:public|private|protected|final|const|static)\s+)*"
-    r"(?:val|var|def|[A-Z][\w]*)\s+$",
+LOCAL_BINDING_WORD = re.compile(
+    r"\b(?:val|var|def|final|const|static|public|private|protected|lateinit)\b",
 )
+COMMAND_CALLEE = re.compile(r"^([A-Za-z_]\w*)(?:\s|\(|$)")
+CONTINUATION_LINE = re.compile(r"^\s*(?:\?\?|\?\:|&&|\|\||\.|\?\.|[+\-*/?:])")
 
 PROJECT_GRADLE_FILES = (
     "build.gradle",
@@ -54,12 +55,13 @@ def _declaration_sort_key(item: NdkDeclaration) -> tuple[str, str, str, str, str
     )
 
 
-def _mask_non_code(content: str) -> str:
+def _mask_non_code(content: str, *, nested_block_comments: bool = False) -> str:
     """Replace comments and string contents with spaces; preserve newlines."""
     out = list(content)
     i = 0
     n = len(content)
     state = "code"
+    block_depth = 0
 
     def blank(start: int, end: int) -> None:
         for j in range(start, end):
@@ -86,6 +88,7 @@ def _mask_non_code(content: str) -> str:
                 continue
             if ch == "/" and i + 1 < n and content[i + 1] == "*":
                 state = "block_comment"
+                block_depth = 1
                 blank(i, i + 2)
                 i += 2
                 continue
@@ -109,10 +112,20 @@ def _mask_non_code(content: str) -> str:
             i += 1
             continue
         if state == "block_comment":
+            if nested_block_comments and ch == "/" and i + 1 < n and content[i + 1] == "*":
+                blank(i, i + 2)
+                block_depth += 1
+                i += 2
+                continue
             if ch == "*" and i + 1 < n and content[i + 1] == "/":
                 blank(i, i + 2)
                 i += 2
+                if nested_block_comments:
+                    block_depth -= 1
+                    if block_depth > 0:
+                        continue
                 state = "code"
+                block_depth = 0
             else:
                 if ch != "\n":
                     out[i] = " "
@@ -198,31 +211,81 @@ def _lhs_ndk_position(segment: str) -> int | None:
     return None
 
 
-def _is_local_ndk_binding(segment: str, lhs_at: int) -> bool:
-    prefix = segment[:lhs_at]
-    if LOCAL_DECL_BEFORE_NDK.search(prefix):
+def _statement_boundary_start(segment: str, lhs_at: int) -> int:
+    start = 0
+    for index in range(lhs_at):
+        if segment[index] in "{;":
+            start = index + 1
+        elif segment[index] == ")":
+            start = index + 1
+    return start
+
+
+def _prefix_allows_dsl_lhs(segment: str, lhs_at: int) -> bool:
+    prefix = segment[_statement_boundary_start(segment, lhs_at):lhs_at]
+    if not prefix.strip():
         return True
-    after = segment[lhs_at + len("ndkVersion"):]
-    return re.match(r"\s*:\s*\w+", after) is not None
-
-
-def _valid_dsl_lhs(segment: str, lhs_at: int) -> bool:
-    if _is_local_ndk_binding(segment, lhs_at):
+    if LOCAL_BINDING_WORD.search(prefix):
         return False
+    if re.search(r"[\w.\]>]", prefix):
+        return False
+    return True
+
+
+def _following_dsl_shape(segment: str, lhs_at: int) -> str:
     after = segment[lhs_at + len("ndkVersion"):].lstrip()
     if not after:
-        return False
+        return "none"
     if after[0] == ":":
-        return False
-    if re.match(r"(?:==|!=|\+=|-=|\?=)", after):
-        return False
-    if after[0] in "?.)":
-        return False
-    if after.startswith("."):
-        return False
+        return "none"
+    if re.match(r"(?:==|!=|\+=|-=|\*=|/=|%=|\?=|<=|>=)", after):
+        return "none"
     if after.startswith("="):
-        return not after.startswith("==")
-    return True
+        return "assign"
+    if after[0] in '"\'':
+        return "literal"
+    if after.startswith("("):
+        return "invoke"
+    if re.match(r"^rootProject\.", after):
+        return "command"
+    callee = COMMAND_CALLEE.match(after)
+    if not callee:
+        return "none"
+    if callee.group(1) == "to":
+        return "none"
+    return "command"
+
+
+def _eligible_dsl_lhs(segment: str, lhs_at: int) -> str:
+    if not _prefix_allows_dsl_lhs(segment, lhs_at):
+        return "none"
+    return _following_dsl_shape(segment, lhs_at)
+
+
+def _next_code_line_starts_with_continuation(
+    content: str,
+    masked: str,
+    line_end: int,
+) -> bool:
+    position = line_end
+    while position < len(content) and content[position] in "\r\n":
+        position += 1
+    if position >= len(content):
+        return False
+    next_end = content.find("\n", position)
+    if next_end == -1:
+        next_line = content[position:]
+        masked_line = masked[position:]
+    else:
+        next_line = content[position:next_end]
+        masked_line = masked[position:next_end]
+    for index, character in enumerate(next_line):
+        if character.strip() == "":
+            continue
+        if masked_line[index] != character:
+            continue
+        return CONTINUATION_LINE.match(next_line[index:]) is not None
+    return False
 
 
 def _span_is_code(content: str, masked: str, start: int, end: int) -> bool:
@@ -242,7 +305,8 @@ def _parse_ndk_lines(
     source: str,
 ) -> list[NdkDeclaration]:
     declarations: list[NdkDeclaration] = []
-    masked = _mask_non_code(content)
+    nested_comments = source.endswith(".kts")
+    masked = _mask_non_code(content, nested_block_comments=nested_comments)
     line_start = 0
     for raw_line in content.splitlines():
         line_end = line_start + len(raw_line)
@@ -260,7 +324,10 @@ def _parse_ndk_lines(
             if not segment:
                 continue
             lhs_at = _lhs_ndk_position(segment)
-            if lhs_at is None or not _valid_dsl_lhs(segment, lhs_at):
+            if lhs_at is None:
+                continue
+            dsl_shape = _eligible_dsl_lhs(segment, lhs_at)
+            if dsl_shape == "none":
                 continue
             decl = segment[lhs_at:]
             seg_offset = working_line.find(segment, search_from)
@@ -280,10 +347,20 @@ def _parse_ndk_lines(
             def _tail_ok(match_end: int) -> bool:
                 return _tail_is_clean_statement_end(decl_masked[match_end:])
 
-            match = NDK_LITERAL.search(decl) or NDK_INVOKE_LITERAL.search(decl)
-            if match and not _lhs_in_code(match.start()):
-                match = None
-            if match and _tail_ok(match.end()):
+            def _continued_after_line() -> bool:
+                return _next_code_line_starts_with_continuation(content, masked, line_end)
+
+            def _append_continued() -> None:
+                declarations.append(NdkDeclaration(
+                    owner=owner,
+                    owner_type=owner_type,
+                    source=source,
+                    value=None,
+                    resolution_kind=NdkResolutionKind.UNSUPPORTED_EXPRESSION,
+                    resolution_path=("ndkVersion", "continued_expression"),
+                ))
+
+            def _append_literal(match: re.Match[str]) -> None:
                 value = match.group(1)
                 kind = NdkResolutionKind.LITERAL
                 if not NDK_NUMERIC.fullmatch(value):
@@ -297,58 +374,79 @@ def _parse_ndk_lines(
                     resolution_kind=kind,
                     resolution_path=("ndkVersion", "literal"),
                 ))
-                continue
 
-            match = NDK_ROOT_PROPERTIES.search(decl)
-            if match and not _lhs_in_code(match.start()):
-                match = None
-            if match and _tail_ok(match.end()):
-                declarations.append(NdkDeclaration(
-                    owner=owner,
-                    owner_type=owner_type,
-                    source=source,
-                    value=None,
-                    resolution_kind=NdkResolutionKind.ROOT_INHERITED,
-                    resolution_path=("ndkVersion", 'rootProject.properties["ndkVersion"].toString()'),
-                ))
-                continue
+            handled = False
+            if dsl_shape in ("literal", "invoke", "assign", "command"):
+                match = NDK_LITERAL.search(decl) or NDK_INVOKE_LITERAL.search(decl)
+                if match and not _lhs_in_code(match.start()):
+                    match = None
+                if match and _tail_ok(match.end()):
+                    if _continued_after_line():
+                        _append_continued()
+                    else:
+                        _append_literal(match)
+                    handled = True
 
-            match = NDK_ROOT.search(decl)
-            if match and not _lhs_in_code(match.start()):
-                match = None
-            if match and _tail_ok(match.end()):
-                declarations.append(NdkDeclaration(
-                    owner=owner,
-                    owner_type=owner_type,
-                    source=source,
-                    value=None,
-                    resolution_kind=NdkResolutionKind.ROOT_INHERITED,
-                    resolution_path=("ndkVersion", "rootProject.ext.ndkVersion"),
-                ))
-                continue
+            if not handled and dsl_shape in ("assign", "command"):
+                match = NDK_ROOT_PROPERTIES.search(decl)
+                if match and not _lhs_in_code(match.start()):
+                    match = None
+                if match and _tail_ok(match.end()):
+                    if _continued_after_line():
+                        _append_continued()
+                    else:
+                        declarations.append(NdkDeclaration(
+                            owner=owner,
+                            owner_type=owner_type,
+                            source=source,
+                            value=None,
+                            resolution_kind=NdkResolutionKind.ROOT_INHERITED,
+                            resolution_path=("ndkVersion", 'rootProject.properties["ndkVersion"].toString()'),
+                        ))
+                    handled = True
 
-            assign = NDK_ASSIGN.search(decl)
-            if assign and not _lhs_in_code(assign.start()):
-                assign = None
-            if not assign:
-                continue
-            expr = decl_masked[assign.start(1):assign.end(1)].strip().rstrip("}")
-            if not expr:
-                continue
-            if re.fullmatch(r'["\'][^"\']+["\'](?:\s*[;}]|\s*)', expr):
-                continue
-            if expr == "rootProject.ext.ndkVersion":
-                continue
-            if NDK_ROOT_PROPERTIES.fullmatch(f"ndkVersion = {expr}"):
-                continue
-            declarations.append(NdkDeclaration(
-                owner=owner,
-                owner_type=owner_type,
-                source=source,
-                value=None,
-                resolution_kind=NdkResolutionKind.UNSUPPORTED_EXPRESSION,
-                resolution_path=("ndkVersion", expr),
-            ))
+            if not handled and dsl_shape in ("assign", "command"):
+                match = NDK_ROOT.search(decl)
+                if match and not _lhs_in_code(match.start()):
+                    match = None
+                if match and _tail_ok(match.end()):
+                    if _continued_after_line():
+                        _append_continued()
+                    else:
+                        declarations.append(NdkDeclaration(
+                            owner=owner,
+                            owner_type=owner_type,
+                            source=source,
+                            value=None,
+                            resolution_kind=NdkResolutionKind.ROOT_INHERITED,
+                            resolution_path=("ndkVersion", "rootProject.ext.ndkVersion"),
+                        ))
+                    handled = True
+
+            if not handled and dsl_shape in ("literal", "invoke", "assign", "command"):
+                assign = NDK_ASSIGN.search(decl)
+                if assign and not _lhs_in_code(assign.start()):
+                    assign = None
+                if assign:
+                    if _continued_after_line():
+                        _append_continued()
+                    else:
+                        expr = decl_masked[assign.start(1):assign.end(1)].strip().rstrip("}")
+                        if expr and not re.fullmatch(
+                            r'["\'][^"\']+["\'](?:\s*[;}]|\s*)',
+                            expr,
+                        ):
+                            if expr not in (
+                                "rootProject.ext.ndkVersion",
+                            ) and not NDK_ROOT_PROPERTIES.fullmatch(f"ndkVersion = {expr}"):
+                                declarations.append(NdkDeclaration(
+                                    owner=owner,
+                                    owner_type=owner_type,
+                                    source=source,
+                                    value=None,
+                                    resolution_kind=NdkResolutionKind.UNSUPPORTED_EXPRESSION,
+                                    resolution_path=("ndkVersion", expr),
+                                ))
         line_start = line_end + 1
     return declarations
 

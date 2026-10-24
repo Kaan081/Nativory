@@ -70,6 +70,9 @@ def main() -> int:
         record["node_modules_present"] = (scan / "node_modules").is_dir()
         results.append(record)
 
+    if any(isinstance(item.get("trace"), dict) and "error" in item["trace"] for item in results):
+        print(f"Skipped writing {RESULTS}: checkout/trace errors present")
+        return 1
     RESULTS.write_text(
         json.dumps(
             {
