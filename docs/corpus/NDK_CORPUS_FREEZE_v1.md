@@ -1,7 +1,7 @@
 # NDK Provenance Corpus Freeze v1
 
-Frozen: 2026-10-24  
-Tool commit: `d763ad6` on `feature/ndk-provenance-trace`  
+Frozen: 2026-10-24
+Tool commit: `d763ad6` on `feature/ndk-provenance-trace`
 Selection rule: ten SHAs taken from `R02_CORPUS_FREEZE_v1` (same pins). Do not remove failures.
 
 | # | Repository | Frozen commit | Scan root | Notes |
@@ -17,9 +17,9 @@ Selection rule: ten SHAs taken from `R02_CORPUS_FREEZE_v1` (same pins). Do not r
 | 9 | jitsi/jitsi-meet | `8a85912a0424ac2dd159853c242630bd11760701` | repo root | |
 | 10 | BlueWallet/BlueWallet | `55df7d2c4385080b42b39333ad3b2faf5d01400e` | repo root | |
 
-Corpus checkouts live under `%TEMP%\\rn_readiness_ndk_corpus_v1` (machine-local).  
+Corpus checkouts live under `%TEMP%\\rn_readiness_ndk_corpus_v1` (machine-local).
 All runs: `trace-ndk` with `node_modules` absent unless noted — **no installed dependency NDK declarations** in this pass.
 
-Machine-readable spec: [`NDK_CORPUS_FREEZE_v1.json`](NDK_CORPUS_FREEZE_v1.json)  
-Run output: [`NDK_CORPUS_RESULTS_v1.json`](NDK_CORPUS_RESULTS_v1.json)  
+Machine-readable spec: [`NDK_CORPUS_FREEZE_v1.json`](NDK_CORPUS_FREEZE_v1.json)
+Run output: [`NDK_CORPUS_RESULTS_v1.json`](NDK_CORPUS_RESULTS_v1.json)
 Manual literal review: [`NDK_CORPUS_MANUAL_REVIEW_v1.md`](NDK_CORPUS_MANUAL_REVIEW_v1.md)

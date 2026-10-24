@@ -1,6 +1,6 @@
 # NDK corpus manual literal review (v1)
 
-Reviewer: agent manual file inspection at frozen SHAs (2026-10-24).  
+Reviewer: agent manual file inspection at frozen SHAs (2026-10-24).
 Legend: **MATCH** | **FALSE POSITIVE** | **AMBIGUOUS**
 
 All repos: `node_modules_present=false` → **no dependency (`installed_dependency`) NDK declarations** in this pass.
