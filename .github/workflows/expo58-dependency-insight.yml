@@ -5,6 +5,7 @@ on:
     branches: [experiment/expo58-graph]
     paths:
       - .github/workflows/expo58-dependency-insight.yml
+      - tools/upgrade_workbench/ci_selected_fbjni_app.gradle
 
 permissions:
   contents: read
@@ -59,11 +60,14 @@ jobs:
         working-directory: expo-probe/android
         shell: bash
         run: |
+          set +e
           timeout 600s ./gradlew :app:rnwbResolveSelectedFbjniAar \
             --init-script "$GITHUB_WORKSPACE/tools/upgrade_workbench/ci_selected_fbjni_app.gradle" \
             --no-daemon --console=plain --max-workers=2 \
             > "$GITHUB_WORKSPACE/evidence/app-selected-aar.log" 2>&1
-          tail -n 20 "$GITHUB_WORKSPACE/evidence/app-selected-aar.log"
+          code=$?
+          tail -n 45 "$GITHUB_WORKSPACE/evidence/app-selected-aar.log"
+          exit "$code"
       - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4

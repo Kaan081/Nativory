@@ -8,11 +8,16 @@ gradle.beforeProject { project ->
         project.tasks.register('rnwbResolveSelectedFbjniAar') {
             doLast {
                 def runtime = project.configurations.getByName('debugRuntimeClasspath')
-                def matches = runtime.incoming.artifacts.artifacts.findAll { record ->
-                    def component = record.id.componentIdentifier
-                    component instanceof ModuleComponentIdentifier &&
-                        component.group == 'com.facebook.fbjni' && component.module == 'fbjni'
+                def aarView = runtime.incoming.artifactView {
+                    componentFilter { id ->
+                        id instanceof ModuleComponentIdentifier &&
+                            id.group == 'com.facebook.fbjni' && id.module == 'fbjni'
+                    }
+                    attributes {
+                        attribute(org.gradle.api.attributes.Attribute.of('artifactType', String), 'aar')
+                    }
                 }
+                def matches = aarView.artifacts.artifacts.toList()
                 if (matches.size() != 1) {
                     throw new GradleException('RNWB_EXPECTED_ONE_APP_FBJINI_AAR: ' + matches.size())
                 }
