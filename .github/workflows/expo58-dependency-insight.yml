@@ -38,7 +38,7 @@ jobs:
 
       - name: Install platform SDK on CI runner only
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-37' 'build-tools;37.0.0'
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-37.0' 'build-tools;37.0.0'
 
       - name: Resolve real app FBJNI dependency insight
         shell: bash
