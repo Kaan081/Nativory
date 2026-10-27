@@ -18,6 +18,7 @@ from pathlib import Path
 PAGE = 16384
 MAX_ARCHIVE_BYTES = 768 * 1024 * 1024
 MAX_MEMBER_BYTES = 128 * 1024 * 1024
+MAX_TOTAL_SO_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 20000
 MAX_SO_ENTRIES = 512
 MAX_HEADERS = 4096
@@ -227,6 +228,8 @@ def inspect(path: Path) -> dict:
                 sos = [m for m in members if m.filename.lower().endswith('.so') and not m.is_dir()]
                 if len(sos) > MAX_SO_ENTRIES:
                     raise ValueError('TOO_MANY_SO_ENTRIES')
+                if sum(m.file_size for m in sos) > MAX_TOTAL_SO_BYTES:
+                    raise ValueError('TOTAL_NATIVE_PAYLOAD_BUDGET_EXCEEDED')
                 seen = set()
                 for member in sos:
                     if member.filename in seen:

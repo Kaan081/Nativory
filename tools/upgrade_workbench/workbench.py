@@ -90,6 +90,21 @@ def capture_sources(cwd: Path, sources: list[str]) -> list[dict]:
     return result
 
 
+def summarize_log(log: Path) -> tuple[str, int, bool, str]:
+    """Hash the full file while retaining only a bounded prefix in memory."""
+    checksum = hashlib.sha256()
+    count = 0
+    prefix = bytearray()
+    if log.exists():
+        with log.open('rb') as stream:
+            while chunk := stream.read(1024 * 1024):
+                checksum.update(chunk)
+                count += len(chunk)
+                if len(prefix) < MAX_LOG_READ:
+                    prefix.extend(chunk[:MAX_LOG_READ - len(prefix)])
+    return checksum.hexdigest(), count, count > MAX_LOG_READ, prefix.decode('utf-8', errors='replace')
+
+
 def run_arm(arm: dict, workspace_root: Path, out: Path, role: str, timeout: int) -> dict:
     cwd = require_inside(workspace_root, arm['cwd'], require_dir=True)
     sources_before = capture_sources(cwd, arm.get('sources', []))
@@ -111,9 +126,7 @@ def run_arm(arm: dict, workspace_root: Path, out: Path, role: str, timeout: int)
     elapsed = round(time.monotonic() - start, 2)
     sources_after = capture_sources(cwd, arm.get('sources', []))
     source_drift = sources_before != sources_after
-    raw = log.read_bytes() if log.exists() else b''
-    log_oversize = len(raw) > MAX_LOG_READ
-    parsed = raw[:MAX_LOG_READ].decode('utf-8', errors='replace')
+    log_sha, log_bytes, log_oversize, parsed = summarize_log(log)
     return {
         'role': role,
         'argv': arm['argv'],
@@ -122,8 +135,8 @@ def run_arm(arm: dict, workspace_root: Path, out: Path, role: str, timeout: int)
         'execution_error': execution_error,
         'elapsed_seconds': elapsed,
         'log_file': log.name,
-        'log_sha256': digest(raw),
-        'log_bytes': len(raw),
+        'log_sha256': log_sha,
+        'log_bytes': log_bytes,
         'log_oversize': log_oversize,
         'log_text': parsed,
         'sources_before': sources_before,
@@ -170,14 +183,35 @@ def verify(manifest: Path, workspace: Path, output: Path, timeout: int, *, execu
     after_dir = require_inside(workspace, doc['runs']['after']['cwd'])
     if before_dir == after_dir:
         raise ValueError('BEFORE_AFTER_WORKSPACES_MUST_DIFFER')
+    if before_dir in after_dir.parents or after_dir in before_dir.parents:
+        raise ValueError('BEFORE_AFTER_WORKSPACES_OVERLAP')
     if any(root in output.resolve().parents or root == output.resolve() for root in (before_dir, after_dir)):
         raise ValueError('OUTPUT_CANNOT_BE_INSIDE_ARM_WORKSPACE')
     if output.exists():
         raise ValueError('OUTPUT_ALREADY_EXISTS')
     output.mkdir(parents=True)
     raw_before = run_arm(doc['runs']['before'], workspace, output, 'before', timeout)
-    raw_after = run_arm(doc['runs']['after'], workspace, output, 'after', timeout)
+    before_invalid = (
+        raw_before['execution_error'] is not None or raw_before['log_oversize']
+        or raw_before['source_drift'] or raw_before['exit_code'] == 0
+        or doc['failure_marker'] not in raw_before['log_text']
+    )
+    if before_invalid:
+        # A failed before precondition cannot establish a comparison. Do not run after.
+        raw_after = {
+            'role': 'after', 'argv': doc['runs']['after']['argv'],
+            'cwd': doc['runs']['after']['cwd'], 'exit_code': None,
+            'execution_error': None, 'elapsed_seconds': 0,
+            'log_file': None, 'log_sha256': None, 'log_bytes': 0,
+            'log_oversize': False, 'log_text': '',
+            'sources_before': [], 'sources_after': [], 'source_drift': False,
+            'skipped_due_to_before_precondition': True,
+        }
+    else:
+        raw_after = run_arm(doc['runs']['after'], workspace, output, 'after', timeout)
     status, observations = classify(raw_before, raw_after, doc['failure_marker'], doc['after_artifact_marker'])
+    if before_invalid:
+        observations.append('AFTER_NOT_EXECUTED_BEFORE_PRECONDITION_FAILED')
     for arm in (raw_before, raw_after):
         arm['failure_marker_seen'] = doc['failure_marker'] in arm['log_text']
         arm['artifact_marker_seen'] = doc['after_artifact_marker'] in arm['log_text']
