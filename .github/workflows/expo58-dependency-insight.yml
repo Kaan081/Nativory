@@ -1,0 +1,65 @@
+name: Expo 58 real app dependency graph experiment
+
+on:
+  push:
+    branches: [experiment/expo58-graph]
+    paths:
+      - .github/workflows/expo58-dependency-insight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  app-graph:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Create Expo SDK 58 fixture
+        run: |
+          CI=1 npx --yes create-expo-app@latest expo-probe --template default@sdk-58 --yes --no-agents-md
+          mkdir -p evidence
+          node -e 'const fs=require("fs"),versions={};for(const p of ["expo","react-native","expo-modules-core"]){const v=require(`./expo-probe/node_modules/${p}/package.json`).version;versions[p]=v;console.log(p+"="+v);fs.appendFileSync("evidence/versions.txt",p+"="+v+"\n");}if(!versions.expo.startsWith("58.")||!versions["react-native"].startsWith("0.88."))process.exit(12);'
+          if [ -f expo-probe/package-lock.json ]; then sha256sum expo-probe/package-lock.json > evidence/npm-lock.sha256; else echo NOT_FOUND > evidence/npm-lock.sha256; fi
+
+      - name: Generate Android project without APK build
+        working-directory: expo-probe
+        run: CI=1 npx expo prebuild --platform android --no-install
+
+      - name: Install platform SDK on CI runner only
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-37' 'build-tools;37.0.0'
+
+      - name: Resolve real app FBJNI dependency insight
+        shell: bash
+        working-directory: expo-probe/android
+        run: |
+          set +e
+          timeout 600s ./gradlew :app:dependencyInsight \
+            --configuration debugRuntimeClasspath \
+            --dependency com.facebook.fbjni:fbjni \
+            --no-daemon --console=plain --max-workers=2 \
+            > "$GITHUB_WORKSPACE/evidence/dependency-insight.log" 2>&1
+          code=$?
+          echo "$code" > "$GITHUB_WORKSPACE/evidence/gradle-exit-code.txt"
+          tail -n 45 "$GITHUB_WORKSPACE/evidence/dependency-insight.log"
+          exit "$code"
+
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: expo58-fbjni-graph-probe
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: warn
