@@ -55,6 +55,15 @@ jobs:
           tail -n 45 "$GITHUB_WORKSPACE/evidence/dependency-insight.log"
           exit "$code"
 
+      - name: Resolve selected AAR from actual app dependency graph
+        working-directory: expo-probe/android
+        shell: bash
+        run: |
+          timeout 600s ./gradlew :app:rnwbResolveSelectedFbjniAar \
+            --init-script "$GITHUB_WORKSPACE/tools/upgrade_workbench/ci_selected_fbjni_app.gradle" \
+            --no-daemon --console=plain --max-workers=2 \
+            > "$GITHUB_WORKSPACE/evidence/app-selected-aar.log" 2>&1
+          tail -n 20 "$GITHUB_WORKSPACE/evidence/app-selected-aar.log"
       - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4

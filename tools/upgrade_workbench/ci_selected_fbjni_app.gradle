@@ -1,0 +1,60 @@
+import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        project.tasks.register('rnwbResolveSelectedFbjniAar') {
+            doLast {
+                def runtime = project.configurations.getByName('debugRuntimeClasspath')
+                def matches = runtime.incoming.artifacts.artifacts.findAll { record ->
+                    def component = record.id.componentIdentifier
+                    component instanceof ModuleComponentIdentifier &&
+                        component.group == 'com.facebook.fbjni' && component.module == 'fbjni'
+                }
+                if (matches.size() != 1) {
+                    throw new GradleException('RNWB_EXPECTED_ONE_APP_FBJINI_AAR: ' + matches.size())
+                }
+                def selected = matches.iterator().next()
+                def component = selected.id.componentIdentifier
+                def f = selected.file
+                if (!f.isFile() || !f.name.toLowerCase().endsWith('.aar')) {
+                    throw new GradleException('RNWB_SELECTED_ARTIFACT_NOT_AAR')
+                }
+                def hash = MessageDigest.getInstance('SHA-256')
+                f.withInputStream { stream ->
+                    byte[] bytes = new byte[65536]
+                    int count
+                    while ((count = stream.read(bytes)) != -1) hash.update(bytes, 0, count)
+                }
+                def hex = hash.digest().collect { String.format('%02x', it & 255) }.join('')
+                def nativePaths = []
+                ZipFile zip = new ZipFile(f)
+                try {
+                    zip.entries().each { item ->
+                        if (!item.isDirectory() && item.name.toLowerCase().endsWith('.so')) {
+                            nativePaths.add(item.name)
+                        }
+                    }
+                } finally { zip.close() }
+                def reference = '7e319ae110ac5e5ef18904170aea5c3e753e915d196699d7fd39d36c8e1dfe36'
+                def matched = hex == reference && nativePaths.size() == 12 && component.version == '0.7.0'
+                println('RNWB_APP_AAR_PROVENANCE_V1:' + JsonOutput.toJson([
+                    scope: 'CI_GENERATED_EXPO58_APP_DEBUG_RUNTIME_ONLY',
+                    status: matched ? 'SCOPED_APP_SELECTED_AAR_MATCH' : 'INCONCLUSIVE_APP_SELECTED_AAR_MISMATCH',
+                    coordinate: "${component.group}:${component.module}:${component.version}",
+                    file_name: f.name,
+                    sha256: hex,
+                    reference_sha256: reference,
+                    artifact_bytes: f.length(),
+                    native_entry_count: nativePaths.size(),
+                    native_entry_paths: nativePaths.sort(),
+                    current_user_local_app_owner: 'NOT_VERIFIED',
+                    apk_packaging_and_release: 'NOT_VERIFIED'
+                ]))
+                if (!matched) throw new GradleException('RNWB_APP_AAR_EVIDENCE_INCONCLUSIVE')
+            }
+        }
+    }
+}
