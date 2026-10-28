@@ -1,10 +1,18 @@
-# RN Readiness
+# Nativory — Native Upgrade Evidence
 
-Experimental, read-only React Native Android release-readiness scanner.
+Evidence-backed native dependency tracing and scoped upgrade verification for React Native / Android.
+
+**Current main-branch capability:** the original offline, read-only R02 AGP/Gradle scanner. Its supported command is still `rn-readiness`.
+
+**Experimental development:** native artifact inspection, FBJNI verification, Evidence Bridge and the new `nativory` CLI alias are in [Draft PR #2](https://github.com/Kaan081/Nativory/pull/2). They are not yet merged into `main`.
+
+**Legacy compatibility:** the Python package remains `rn_readiness` and the distribution remains `rn-readiness-spike`.
+
+**Principle:** Evidence before certainty.
 
 **Current scope:** one rule only — **R02: Android Gradle Plugin (AGP) ↔ Gradle minimum compatibility**.
 
-RN Readiness is intentionally conservative: if it cannot justify a toolchain fact from supported evidence, it returns an unresolved state and does **not** convert uncertainty into a compatibility failure.
+The current scanner is intentionally conservative: if it cannot justify a toolchain fact from supported evidence, it returns an unresolved state and does **not** convert uncertainty into a compatibility failure.
 
 > **The goal is not to minimize UNKNOWN. The goal is to minimize unjustified certainty.**
 
@@ -16,7 +24,7 @@ Modern React Native apps can declare AGP indirectly. A root `build.gradle` may c
 classpath("com.android.tools.build:gradle")
 ```
 
-In supported modern layouts, RN Readiness follows static provenance instead of guessing:
+In supported modern layouts, The current scanner follows static provenance instead of guessing:
 
 ```text
 android/settings.gradle
