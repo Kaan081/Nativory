@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 from importlib import import_module
 from pathlib import Path
 
