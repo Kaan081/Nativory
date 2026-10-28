@@ -1,0 +1,158 @@
+name: Controlled same-app FBJNI 0.6 to 0.7 AAR experiment
+
+on:
+  push:
+    branches: [experiment/expo58-graph]
+    paths:
+      - .github/workflows/controlled-fbjni-same-app.yml
+      - tools/upgrade_workbench/ci_controlled_fbjni.gradle
+
+permissions:
+  contents: read
+
+jobs:
+  same-app-controlled-before-after:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Create a real temporary Expo 58 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          CI=1 npx --yes create-expo-app@latest expo-probe --template default@sdk-58 --yes --no-agents-md
+          mkdir -p evidence
+          node -e 'for (const [p,prefix] of [["expo","58."],["react-native","0.88."]]) {const v=require(`./expo-probe/node_modules/${p}/package.json`).version;console.log(`${p}=${v}`);if(!v.startsWith(prefix))process.exit(12)}'
+          (cd expo-probe && CI=1 npx expo prebuild --platform android --no-install)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-37.0' 'build-tools;37.0.0'
+          sha256sum expo-probe/package-lock.json expo-probe/android/app/build.gradle > evidence/app-inputs-before.sha256
+
+      - name: Resolve two versions in the very same Expo app
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arm in before after; do
+            version=0.6.0
+            if [ "$arm" = after ]; then version=0.7.0; fi
+            set +e
+            (cd expo-probe/android && timeout 600s ./gradlew :app:rnwbControlledFbjniAar \
+              --init-script "$GITHUB_WORKSPACE/tools/upgrade_workbench/ci_controlled_fbjni.gradle" \
+              "-PrnwbFbjniVersion=$version" \
+              "-PrnwbEvidencePath=$GITHUB_WORKSPACE/evidence/$arm-selection.json" \
+              --no-daemon --console=plain --max-workers=2) \
+              > "evidence/$arm-gradle.log" 2>&1
+            code=$?
+            set -e
+            echo "$code" > "evidence/$arm-exit.txt"
+            tail -n 25 "evidence/$arm-gradle.log"
+            if [ "$code" -ne 0 ]; then exit "$code"; fi
+          done
+          sha256sum -c evidence/app-inputs-before.sha256
+
+      - name: Independently inspect both app-selected AARs and compare
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, subprocess, sys
+          from pathlib import Path
+
+          root = Path('evidence')
+          root.mkdir(exist_ok=True)
+          result = {
+              'schema': 'rnwb-controlled-same-app-pair-0.1',
+              'scope': 'SINGLE_CI_GENERATED_EXPO58_APP_WITH_CONTROLLED_GRADLE_FORCE',
+              'status': 'INCONCLUSIVE',
+              'app_fix_accepted': False,
+              'release_certified': False,
+              'apk_build_verified': False,
+              'limitations': [
+                  'Forced versions in an ephemeral test app, not an observed developer fix',
+                  'No final APK/AAB, runtime or Play verification'
+              ]
+          }
+          reference = {
+              'before': ('0.6.0', 'e87165d3c0f81371fa03fa7cae50ee1576c550329516bb1f4978f419b4b07d4c'),
+              'after': ('0.7.0', '7e319ae110ac5e5ef18904170aea5c3e753e915d196699d7fd39d36c8e1dfe36')
+          }
+          try:
+              paths = {}
+              for arm, (version, digest) in reference.items():
+                  assert (root / f'{arm}-exit.txt').read_text().strip() == '0'
+                  record = json.loads((root / f'{arm}-selection.json').read_text())
+                  assert record['scope'] == 'CI_GENERATED_EXPO58_APP_WITH_FORCED_VERSION_NOT_CUSTOMER_FIX'
+                  assert record['configuration'] == 'debugRuntimeClasspath'
+                  assert record['coordinate'] == f'com.facebook.fbjni:fbjni:{version}'
+                  assert record['forced_version'] == version
+                  assert record['resolved_aar_sha256'] == digest
+                  assert record['app_fix_accepted'] is False
+                  assert record['release_certified'] is False
+
+                  artifact = Path(record['aar_path'])
+                  assert artifact.is_file() and not artifact.is_symlink()
+                  inspection = json.loads(subprocess.check_output(
+                      [sys.executable, 'tools/upgrade_workbench/inspect_native_artifact.py', str(artifact)],
+                      text=True
+                  ))
+                  assert inspection['artifact_sha256'] == digest
+                  expected_status = (
+                      'ATTENTION_64BIT_ALIGNMENT_EVIDENCE' if arm == 'before'
+                      else 'OBSERVED_64BIT_SOURCE_ALIGNMENT_ONLY_NOT_RELEASE_CERTIFICATION'
+                  )
+                  assert inspection['status'] == expected_status
+
+                  libs = {
+                      x['entry']: x for x in inspection['libraries']
+                      if x.get('abi_from_archive_path') in ('arm64-v8a', 'x86_64')
+                  }
+                  assert len(libs) == 6
+                  assert all(x['elf']['elf_class'] == 'ELF64' for x in libs.values())
+                  for item in libs.values():
+                      segments = item['elf']['segments']
+                      assert segments
+                      if arm == 'before':
+                          assert any(not s['aligned_16k'] for s in segments)
+                      else:
+                          assert all(s['aligned_16k'] for s in segments)
+
+                  paths[arm] = set(libs)
+                  result[arm] = {
+                      'coordinate': record['coordinate'],
+                      'selected_aar_sha256': digest,
+                      'native_64bit_count': len(libs),
+                      'inspector_status': inspection['status']
+                  }
+              assert paths['before'] == paths['after']
+              result['status'] = 'SCOPED_SAME_EXPO_APP_CONTROLLED_AAR_BEFORE_AFTER_VERIFIED_NOT_APP_FIX'
+              result['same_native_64bit_paths'] = len(paths['before'])
+          except (AssertionError, ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+              result['reason'] = str(error) or 'CONTROLLED_EXPERIMENT_VALIDATION_FAILED'
+          root.joinpath('controlled-before-after-report.json').write_text(
+              json.dumps(result, sort_keys=True, indent=2) + '\n'
+          )
+          print(result['status'], result.get('reason', ''))
+          if result['status'] == 'INCONCLUSIVE':
+              sys.exit(2)
+          PY
+
+      - name: Preserve report and diagnostics, not AAR binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fbjni-same-app-controlled-0.6-to-0.7
+          path: |
+            evidence/*-selection.json
+            evidence/*-exit.txt
+            evidence/*-gradle.log
+            evidence/app-inputs-before.sha256
+            evidence/controlled-before-after-report.json
+          retention-days: 7
+          if-no-files-found: warn
