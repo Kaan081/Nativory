@@ -1,0 +1,23 @@
+{
+  "schema_version": "rn-upgrade-case-0.1",
+  "case_id": "EXPO-50293-ISOLATED-KOTLIN-COMPILE",
+  "scope": "isolated_compiler_compile",
+  "failure_marker": "getPluginId",
+  "after_artifact_marker": "io.github.expo:expo-modules-v2-compiler-plugin:0.2.0-2.3.20",
+  "upstream_references": [
+    "https://github.com/expo/expo/issues/50293",
+    "https://github.com/expo/expo/pull/50562"
+  ],
+  "runs": {
+    "before": {
+      "cwd": "before",
+      "argv": ["gradlew.bat", "compileKotlin", "--no-daemon", "--console=plain"],
+      "sources": ["build.gradle.kts"]
+    },
+    "after": {
+      "cwd": "after",
+      "argv": ["gradlew.bat", "compileKotlin", "--no-daemon", "--console=plain"],
+      "sources": ["build.gradle.kts"]
+    }
+  }
+}

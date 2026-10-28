@@ -1,0 +1,77 @@
+name: FBJNI scoped cross-source evidence bridge
+
+on:
+  push:
+    branches: [experiment/expo58-graph]
+    paths:
+      - .github/workflows/fbjni-evidence-bridge.yml
+      - tools/upgrade_workbench/acceptance_bridge.py
+      - tests/test_acceptance_bridge.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  bridge-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test bridge contract without downloading Expo or SDK
+        run: python3 -m unittest discover -s tests -p test_acceptance_bridge.py -v
+
+      - name: Verify pinned source run identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_RUN: '40575645915'
+          APP_SHA: '2d92171c8f7175a9e1e89c3fcb5c95cd5c41020a'
+          PAIR_RUN: '40648144209'
+          PAIR_SHA: '7e7aae93c6f88597e62ae53d069c9bf1891ec8cc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for role in APP PAIR; do
+            run_var="${role}_RUN"
+            sha_var="${role}_SHA"
+            run_id="${!run_var}"
+            expected_sha="${!sha_var}"
+            actual="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json headSha,conclusion --jq '[.headSha,.conclusion] | join(" ")')"
+            test "$actual" = "$expected_sha success" || {
+              echo "PINNED_SOURCE_NOT_SUCCESSFUL_OR_SHA_MISMATCH: $role $actual"
+              exit 1
+            }
+          done
+
+      - name: Download only existing evidence artifacts (no builds)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .bridge/app .bridge/pair
+          gh run download 40575645915 --repo "$GITHUB_REPOSITORY" \
+            --name expo58-fbjni-graph-probe --dir .bridge/app
+          gh run download 40648144209 --repo "$GITHUB_REPOSITORY" \
+            --name fbjni-real-elf-pair-evidence --dir .bridge/pair
+
+      - name: Assess evidence and preserve scoped status
+        shell: bash
+        run: |
+          python3 tools/upgrade_workbench/acceptance_bridge.py \
+            --app-dir .bridge/app --pair-dir .bridge/pair \
+            --app-run-id 40575645915 \
+            --app-head-sha 2d92171c8f7175a9e1e89c3fcb5c95cd5c41020a \
+            --pair-run-id 40648144209 \
+            --pair-head-sha 7e7aae93c6f88597e62ae53d069c9bf1891ec8cc \
+            --output evidence/scoped-fix-evidence-bridge.json
+
+      - name: Upload report only, never native binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fbjni-scoped-fix-evidence-bridge
+          path: evidence/scoped-fix-evidence-bridge.json
+          retention-days: 7
+          if-no-files-found: warn

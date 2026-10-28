@@ -19,7 +19,9 @@ def run(path: str):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Read-only AGP/Gradle minimum compatibility spike")
+    parser = argparse.ArgumentParser(
+        description="Nativory — read-only AGP/Gradle minimum compatibility scanner (R02 only)",
+    )
     parser.add_argument("first", nargs="?", default=".", help="Repository path, or the scan command")
     parser.add_argument("second", nargs="?", help="Repository path after scan")
     parser.add_argument("--json", action="store_true", dest="json_output")
@@ -27,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.first == "scan":
         path = args.second or "."
     elif args.second is not None:
-        parser.error("Expected: rn-readiness [scan] [PROJECT_PATH]")
+        parser.error("Expected: nativory or rn-readiness [scan] [PROJECT_PATH]")
     else:
         path = args.first
     try:

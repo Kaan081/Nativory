@@ -1,0 +1,208 @@
+name: Published FBJNI 16 KiB ELF comparison
+
+on:
+  push:
+    branches: [experiment/expo58-graph]
+    paths:
+      - .github/workflows/fbjni-real-elf-pair.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-published-aar-pair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch real AARs and verify Maven checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+
+          for v in 0.6.0 0.7.0; do
+            url="https://repo.maven.apache.org/maven2/com/facebook/fbjni/fbjni/$v/fbjni-$v.aar"
+
+            curl -fLsS --retry 3 --connect-timeout 15 \
+              -o "evidence/fbjni-$v.aar" "$url"
+
+            curl -fLsS --retry 3 --connect-timeout 15 \
+              -o "evidence/fbjni-$v.aar.sha256" "$url.sha256"
+
+            digest="$(tr -d '[:space:]' < "evidence/fbjni-$v.aar.sha256")"
+
+            [[ "$digest" =~ ^[a-fA-F0-9]{64}$ ]] || exit 1
+
+            printf '%s  %s\n' \
+              "$digest" "evidence/fbjni-$v.aar" | sha256sum -c
+          done
+
+          echo '7e319ae110ac5e5ef18904170aea5c3e753e915d196699d7fd39d36c8e1dfe36  evidence/fbjni-0.7.0.aar' \
+            | sha256sum -c
+
+      - name: Compare Workbench with independent readelf
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          import zipfile
+          from pathlib import Path
+
+          root = Path("evidence")
+          summaries = {}
+
+          for version in ("0.6.0", "0.7.0"):
+              aar = root / f"fbjni-{version}.aar"
+
+              output = subprocess.check_output(
+                  [
+                      sys.executable,
+                      "tools/upgrade_workbench/inspect_native_artifact.py",
+                      str(aar),
+                  ],
+                  text=True,
+              )
+
+              report = json.loads(output)
+
+              (root / f"fbjni-{version}-workbench.json").write_text(
+                  json.dumps(report, indent=2) + "\n"
+              )
+
+              checks = []
+
+              with zipfile.ZipFile(aar) as archive, tempfile.TemporaryDirectory() as tmp:
+                  for lib in report["libraries"]:
+
+                      if lib.get("abi_from_archive_path") not in (
+                          "arm64-v8a",
+                          "x86_64",
+                      ):
+                          continue
+
+                      assert lib["elf"].get("elf_class") == "ELF64"
+
+                      candidate = Path(tmp) / "libnative.so"
+                      candidate.write_bytes(archive.read(lib["entry"]))
+
+                      output = subprocess.check_output(
+                          ["readelf", "-lW", str(candidate)],
+                          text=True,
+                      )
+
+                      loads = []
+
+                      for line in output.splitlines():
+                          if not re.match(r"^\s*LOAD\s", line):
+                              continue
+
+                          fields = line.split()
+
+                          offset = int(fields[1], 16)
+                          vaddr = int(fields[2], 16)
+                          align = int(fields[-1], 16)
+
+                          loads.append({
+                              "offset": offset,
+                              "vaddr": vaddr,
+                              "p_align": align,
+                              "aligned_16k": (
+                                  align >= 16384
+                                  and (align & (align - 1)) == 0
+                                  and (offset - vaddr) % 16384 == 0
+                              ),
+                          })
+
+                      expected = [
+                          {
+                              k: segment[k]
+                              for k in (
+                                  "offset",
+                                  "vaddr",
+                                  "p_align",
+                                  "aligned_16k",
+                              )
+                          }
+                          for segment in lib["elf"]["segments"]
+                      ]
+
+                      assert loads and loads == expected, (
+                          f"READELF_INSPECTOR_DISAGREE_{version}_{lib['entry']}"
+                      )
+
+                      checks.append({
+                          "entry": lib["entry"],
+                          "all_loads_16k": all(
+                              segment["aligned_16k"] for segment in loads
+                          ),
+                          "p_align": [
+                              segment["p_align"] for segment in loads
+                          ],
+                      })
+
+              assert checks, f"NO_64BIT_ELF_{version}"
+
+              summaries[version] = {
+                  "workbench_status": report["status"],
+                  "verified_64bit_entries": len(checks),
+                  "independent_readelf": checks,
+              }
+
+          negative = any(
+              not entry["all_loads_16k"]
+              for entry in summaries["0.6.0"]["independent_readelf"]
+          )
+
+          positive = all(
+              entry["all_loads_16k"]
+              for entry in summaries["0.7.0"]["independent_readelf"]
+          )
+
+          if negative and positive:
+              status = "REAL_64BIT_ELF_NEGATIVE_POSITIVE_OBSERVED"
+          else:
+              status = "NO_VERIFIED_NEGATIVE_POSITIVE_PAIR"
+
+          summaries["status"] = status
+
+          summaries["limitations"] = [
+              "Published AAR source ELF only",
+              "Not an app-selected 0.6.0 AAR",
+              "No APK/AAB packaging or runtime certification",
+          ]
+
+          (root / "pair-result.json").write_text(
+              json.dumps(summaries, indent=2) + "\n"
+          )
+
+          print("FBJNI_REAL_PAIR:", status)
+
+          for version in ("0.6.0", "0.7.0"):
+              print(
+                  version,
+                  summaries[version]["workbench_status"],
+                  summaries[version]["verified_64bit_entries"],
+              )
+
+          if not (negative and positive):
+              raise SystemExit("NO_VERIFIED_NEGATIVE_POSITIVE_PAIR")
+          PY
+
+      - name: Preserve evidence without publishing binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fbjni-real-elf-pair-evidence
+          path: |
+            evidence/*.sha256
+            evidence/*-workbench.json
+            evidence/pair-result.json
+          retention-days: 7
+          if-no-files-found: warn
