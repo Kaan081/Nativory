@@ -1,6 +1,6 @@
-# RN Upgrade Workbench alpha — integration and evidence scope
+# Nativory — experimental upgrade workbench (RN Upgrade Workbench alpha)
 
-**Status:** Additive experimental module only. Existing `rn-readiness scan`, `trace-ndk`, and their JSON schema/exit contracts are unchanged. Does not modify published `main` or claim new release-readiness coverage.
+**Status:** Additive experimental module under `tools/upgrade_workbench/` only. Existing `nativory` / `rn-readiness scan`, `trace-ndk`, and their JSON schema/exit contracts are unchanged. Does not modify published `main` or claim new release-readiness coverage.
 
 ## Components
 

@@ -1,6 +1,6 @@
-# RN Upgrade Workbench — isolated alpha 0.1.5
+# Nativory — experimental upgrade workbench (RN Upgrade Workbench alpha 0.1.5)
 
-Experimental sibling scripts for historical Expo #50293 replay, Reanimated #10544 property semantics, native ELF/APK inspection and isolated Gradle AAR provenance. **Not integrated into the RN Readiness CLI.**
+Experimental sibling scripts for historical Expo #50293 replay, Reanimated #10544 property semantics, native ELF/APK inspection and isolated Gradle AAR provenance. **Not integrated into the installed Nativory / `rn-readiness` scanner CLI.**
 
 Scope: The generated NDK/GString case reproduces a Gradle property **type conversion**, not a genuine Reanimated module build failure or NDK selection; its *before* task deliberately fails when the old `as? String` cast drops the GString, its *after* task uses the upstream `CharSequence` conversion and must succeed. Both use identical root Groovy properties and separate workspace directories. **A passing report does not certify native binaries, AAB, Android SDK, release readiness, or saved time.** The report's `AFTER_LOG_CONTAINS_ARTIFACT_MARKER_UNATTESTED` is a generic label: for this case it refers to a printed **property value**, not a compiler artifact.
 
@@ -10,7 +10,7 @@ Test generator without Gradle:
 py -B .\prepare_ndk_gstring_case.py --self-test
 ```
 
-Stage case in a new, empty destination (nothing touches RN Readiness repo):
+Stage case in a new, empty destination (nothing touches this repository checkout):
 
 ```powershell
 py -B .\prepare_ndk_gstring_case.py `
@@ -80,7 +80,7 @@ compatible**, nor that `prefab/` entries are actually packaged in an APK.
 `alignment_summary` includes counts for 64-bit, 32-bit, Prefab and JNI.
 Use `--json` to preserve per-entry evidence.
 
-No GitHub pushes, RN Readiness repository changes, automatic dependency
+No GitHub pushes, unrelated repository changes, automatic dependency
 association, build/test certification or new artifact downloads are performed.
 
 References: https://developer.android.com/guide/practices/page-sizes

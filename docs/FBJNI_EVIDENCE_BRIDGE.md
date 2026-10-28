@@ -1,4 +1,6 @@
-# FBJNI cross-source evidence bridge (experimental)
+# FBJNI cross-source evidence bridge (Nativory experimental)
+
+Part of the Nativory native upgrade evidence workbench (`tools/upgrade_workbench/`). Historical logs may refer to “Workbench” and `RNWB_*` markers; those contracts are unchanged.
 
 Scope: combine evidence from a CI-generated Expo SDK 58 application’s selected
 `debugRuntimeClasspath` FBJNI AAR and two published Maven AAR native inspections.

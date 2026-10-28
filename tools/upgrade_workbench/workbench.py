@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RN Upgrade Workbench alpha: limited preflight + controlled fix evidence.
+"""Nativory upgrade workbench (RN Upgrade Workbench alpha): limited preflight + controlled fix evidence.
 
 Python 3.10+. preflight is strictly read-only. verify executes commands supplied
 by the developer in two explicitly selected workspaces; it MUST NOT be used
@@ -311,7 +311,9 @@ def self_test() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description='RN Upgrade Workbench alpha (not a release certification)')
+    p = argparse.ArgumentParser(
+        description='Nativory experimental upgrade workbench (not a release certification)',
+    )
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('self-test')
     pre = sub.add_parser('preflight', help='Source-only narrow Expo/Kotlin preflight, no build')
