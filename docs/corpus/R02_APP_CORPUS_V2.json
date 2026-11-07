@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "provenance": "docs/corpus/R02_CORPUS_FREEZE_v1.md",
+  "purpose": "predeclared application-focused subset; not an installed-app or build-success claim",
+  "cases": [
+    {"id": "rn-template", "repository": "react-native-community/template", "commit": "fe29a9ad1344af52e787cd0fa3a5b707d631bb85", "scan_root": "template", "kind": "template"},
+    {"id": "mattermost-mobile", "repository": "mattermost/mattermost-mobile", "commit": "726cd9865d4b2c0040853e9c364fa6365791dbb1", "scan_root": ".", "kind": "application"},
+    {"id": "rocket-chat", "repository": "RocketChat/Rocket.Chat.ReactNative", "commit": "a08ab04b98021737c119aea9978c85fdecc4c6cc", "scan_root": ".", "kind": "application"},
+    {"id": "expensify-app", "repository": "Expensify/App", "commit": "f3dc42e57a823f834120cd9f6557b61f04b70953", "scan_root": ".", "kind": "application"},
+    {"id": "metamask-mobile", "repository": "MetaMask/metamask-mobile", "commit": "0c61213714554680d5421af337b72f89e0f72f7d", "scan_root": ".", "kind": "application"},
+    {"id": "rainbow", "repository": "rainbow-me/rainbow", "commit": "e406e093f1b7afbd212023dcc52e14d6a3bce230", "scan_root": ".", "kind": "application"},
+    {"id": "jitsi-meet", "repository": "jitsi/jitsi-meet", "commit": "8a85912a0424ac2dd159853c242630bd11760701", "scan_root": ".", "kind": "application"},
+    {"id": "bluewallet", "repository": "BlueWallet/BlueWallet", "commit": "55df7d2c4385080b42b39333ad3b2faf5d01400e", "scan_root": ".", "kind": "application"},
+    {"id": "zulip-mobile", "repository": "zulip/zulip-mobile", "commit": "d7cf6da79b4b9467e240b42f24330e97390a8aff", "scan_root": ".", "kind": "application"}
+  ]
+}
