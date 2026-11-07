@@ -239,3 +239,111 @@ def test_unexpected_gradle_exception_causes_rollback(tmp_path, monkeypatch):
     assert result['status'] == 'FAILED_AND_WRAPPER_ROLLED_BACK'
     assert result['reason'] == 'UNEXPECTED_VERIFICATION_ERROR_RuntimeError'
     assert target.read_bytes() == props()
+
+# v0.2: observable, explicitly approved recovery from a persisted v0.1 backup.
+
+def interrupted_repair(tmp_path, monkeypatch):
+    project, target = fixture_project(tmp_path, monkeypatch)
+    plan = repair.make_plan(project)
+    plan_path = project / 'repair-plan.json'
+    repair.store_json_exclusive(plan_path, plan)
+    original = target.read_bytes()
+    backup = plan_path.with_name(plan_path.name + '.' + plan['plan_id'][:12] + '.original.bak')
+    backup.write_bytes(original)
+    target.write_bytes(repair.replacement(original))
+    return plan, plan_path, target, backup, original
+
+
+def test_recovery_preview_does_not_write(tmp_path, monkeypatch):
+    plan, plan_path, target, _, original = interrupted_repair(tmp_path, monkeypatch)
+    after = target.read_bytes()
+    report = repair.recover(plan_path, plan['plan_id'])
+    assert report['status'] == 'RESTORABLE_WRAPPER_AFTER_IMAGE'
+    assert report['restore_requested'] is False
+    assert report['gradle_or_build_verified'] is False
+    assert target.read_bytes() == after != original
+
+
+def test_recovery_explicit_restore_exact_bytes(tmp_path, monkeypatch):
+    plan, plan_path, target, _, original = interrupted_repair(tmp_path, monkeypatch)
+    report = repair.recover(plan_path, plan['plan_id'], restore=True)
+    assert report['status'] == 'WRAPPER_RESTORED_FROM_BACKUP'
+    assert target.read_bytes() == original
+    second = repair.recover(plan_path, plan['plan_id'], restore=True)
+    assert second['status'] == 'ORIGINAL_ALREADY_PRESENT'
+
+
+def test_recovery_does_not_overwrite_external_change(tmp_path, monkeypatch):
+    plan, plan_path, target, _, _ = interrupted_repair(tmp_path, monkeypatch)
+    target.write_bytes(b'external change\n')
+    report = repair.recover(plan_path, plan['plan_id'], restore=True)
+    assert report['status'] == 'MANUAL_RECOVERY_REQUIRED_WRAPPER_CHANGED'
+    assert target.read_bytes() == b'external change\n'
+
+
+def test_recovery_bad_backup_refused_without_write(tmp_path, monkeypatch):
+    plan, plan_path, target, backup, _ = interrupted_repair(tmp_path, monkeypatch)
+    post = target.read_bytes()
+    backup.write_bytes(b'not the saved preimage')
+    report = repair.recover(plan_path, plan['plan_id'], restore=True)
+    assert report['status'] == 'MANUAL_RECOVERY_REQUIRED_BACKUP_INVALID'
+    assert target.read_bytes() == post
+
+
+def test_recovery_missing_backup_refused_without_write(tmp_path, monkeypatch):
+    plan, plan_path, target, backup, _ = interrupted_repair(tmp_path, monkeypatch)
+    post = target.read_bytes()
+    backup.unlink()
+    report = repair.recover(plan_path, plan['plan_id'], restore=True)
+    assert report['status'] == 'MANUAL_RECOVERY_REQUIRED_BACKUP_INVALID'
+    assert target.read_bytes() == post
+
+
+def test_recovery_wrong_approval_and_tampered_plan_refused(tmp_path, monkeypatch):
+    plan, plan_path, target, _, _ = interrupted_repair(tmp_path, monkeypatch)
+    post = target.read_bytes()
+    with pytest.raises(repair.RepairRefused, match='APPROVAL_TOKEN'):
+        repair.recover(plan_path, 'f' * 64, restore=True)
+    plan['before_sha256'] = '0' * 64
+    plan_path.write_text(json.dumps(plan))
+    with pytest.raises(repair.RepairRefused, match='TAMPERED'):
+        repair.recover(plan_path, plan['plan_id'], restore=True)
+    assert target.read_bytes() == post
+
+
+def test_recovery_cli_preview_and_explicit_trust_gate(tmp_path, monkeypatch):
+    plan, plan_path, target, _, original = interrupted_repair(tmp_path, monkeypatch)
+    preview = tmp_path / 'preview.json'
+    assert repair.main(['recover', '--plan', str(plan_path), '--approve', plan['plan_id'],
+                        '--report', str(preview)]) == 0
+    assert json.loads(preview.read_text())['status'] == 'RESTORABLE_WRAPPER_AFTER_IMAGE'
+    assert target.read_bytes() != original
+    no_trust = tmp_path / 'no-trust.json'
+    assert repair.main(['recover', '--plan', str(plan_path), '--approve', plan['plan_id'],
+                        '--restore', '--report', str(no_trust)]) == 4
+    assert not no_trust.exists()
+    assert target.read_bytes() != original
+    final = tmp_path / 'restored.json'
+    assert repair.main(['recover', '--plan', str(plan_path), '--approve', plan['plan_id'],
+                        '--restore', '--trust-disposable-project', '--report', str(final)]) == 0
+    assert json.loads(final.read_text())['status'] == 'WRAPPER_RESTORED_FROM_BACKUP'
+    assert target.read_bytes() == original
+
+
+def test_cooperating_second_repair_lock_is_refused(tmp_path):
+    with repair.project_repair_lock(tmp_path):
+        with pytest.raises(repair.RepairRefused, match='REPAIR_ALREADY_RUNNING'):
+            with repair.project_repair_lock(tmp_path):
+                pytest.fail('Second lock should not be acquired')
+    with repair.project_repair_lock(tmp_path):
+        pass  # Lock released cleanly.
+
+
+def test_recovery_empty_backup_is_manual_only(tmp_path, monkeypatch):
+    plan, plan_path, target, backup, _ = interrupted_repair(tmp_path, monkeypatch)
+    post = target.read_bytes()
+    backup.write_bytes(b'')
+    report = repair.recover(plan_path, plan['plan_id'], restore=True)
+    assert report['status'] == 'MANUAL_RECOVERY_REQUIRED_BACKUP_INVALID'
+    assert report['reason'] == 'BACKUP_UNREADABLE'
+    assert target.read_bytes() == post
