@@ -13,23 +13,34 @@ EXIT_CODES = {
 }
 
 
+class _ContractArgumentParser(argparse.ArgumentParser):
+    """Map CLI usage errors to the documented input-error exit code."""
+
+    def error(self, message: str) -> None:
+        raise ValueError(message)
+
+
 def run(path: str):
     _, agp, gradle = collect_facts(path)
     return analyze(path, agp, gradle)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Read-only AGP/Gradle minimum compatibility spike")
+    parser = _ContractArgumentParser(description="Read-only AGP/Gradle minimum compatibility spike")
     parser.add_argument("first", nargs="?", default=".", help="Repository path, or the scan command")
     parser.add_argument("second", nargs="?", help="Repository path after scan")
     parser.add_argument("--json", action="store_true", dest="json_output")
-    args = parser.parse_args(argv)
-    if args.first == "scan":
-        path = args.second or "."
-    elif args.second is not None:
-        parser.error("Expected: rn-readiness [scan] [PROJECT_PATH]")
-    else:
-        path = args.first
+    try:
+        args = parser.parse_args(argv)
+        if args.first == "scan":
+            path = args.second or "."
+        elif args.second is not None:
+            parser.error("Expected: rn-readiness [scan] [PROJECT_PATH]")
+        else:
+            path = args.first
+    except ValueError as error:
+        print(f"INPUT ERROR: {error}", file=sys.stderr)
+        return 4
     try:
         result = run(path)
     except ProjectInputError as error:

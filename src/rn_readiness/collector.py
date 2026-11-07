@@ -27,7 +27,7 @@ UNVERSIONED_CLASSPATH = re.compile(
     r"(?:^|[{};])\s*classpath\s*(?:\(\s*)?['\"]com\.android\.tools\.build:gradle['\"]",
     re.MULTILINE,
 )
-ANDROID_ALIAS = re.compile(r"\balias\s*\(\s*libs\.plugins\.[A-Za-z_][A-Za-z0-9_.]*\s*\)")
+ANDROID_ALIAS = re.compile(r"\balias\s*\(\s*libs\.plugins\.([A-Za-z_][A-Za-z0-9_.]*)\s*\)")
 ANDROID_ID = re.compile(
     r"(?:^|[{};])\s*id\s*(?:\(\s*['\"]com\.android\.(?:application|library)['\"]\s*\)"
     r"|\s+['\"]com\.android\.(?:application|library)['\"])",
@@ -69,6 +69,60 @@ def _safe_read(path: Path) -> str | None:
 def _strip_comments(content: str) -> str:
     text = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
     return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+
+
+def _catalog_aliases_proven_kotlin(project: Path, aliases: set[str]) -> bool:
+    """Ignore an alias only when the local catalog proves a Kotlin Android ID.
+
+    The narrow inline-TOML subset is deliberate. Missing, unreadable, ambiguous,
+    or unsupported catalog declarations remain UNKNOWN rather than guessing.
+    """
+    # Custom catalog wiring can override the default libs accessor. Do not infer
+    # its identity from gradle/libs.versions.toml in that case.
+    for settings_name in ("settings.gradle", "settings.gradle.kts"):
+        try:
+            settings = _safe_read(project / settings_name)
+        except OSError:
+            return False
+        if settings is not None and re.search(r"\bversionCatalogs\b", _strip_comments(settings)):
+            return False
+
+    try:
+        catalog = _safe_read(project / "gradle/libs.versions.toml")
+    except OSError:
+        return False
+    if catalog is None:
+        return False
+
+    section = None
+    verified: set[str] = set()
+    for line in catalog.splitlines():
+        header = TOML_SECTION.match(line)
+        if header:
+            section = header.group(1).strip()
+            continue
+        if section != "plugins":
+            continue
+        declaration = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*=", line)
+        if declaration is None:
+            continue
+        # Gradle accessors normalize version-catalog - and _ separators to dots.
+        alias = re.sub(r"[-_]", ".", declaration.group(1))
+        if alias not in aliases:
+            continue
+        if alias in verified:
+            return False  # Duplicate/colliding catalog keys remain ambiguous.
+        entry = re.fullmatch(
+            r"""\s*[A-Za-z_][A-Za-z0-9_.-]*\s*=\s*\{\s*id\s*=\s*["']([^"']+)["']
+                \s*(?:,\s*version(?:\.ref)?\s*=\s*["'][^"']+["'])?
+                \s*\}\s*(?:\#.*)?""",
+            line,
+            re.VERBOSE,
+        )
+        if entry is None or entry.group(1) != "org.jetbrains.kotlin.android":
+            return False
+        verified.add(alias)
+    return verified == aliases
 
 
 def project_android_root(repo: Path) -> Path:
@@ -176,33 +230,86 @@ def _parse_plugin_catalog(
     return Evidence(values[0], EvidenceScope.LOCAL_DEPENDENCY, source, path), None
 
 
+def _gradle_code_without_strings(text: str) -> str:
+    """Mask quoted contents while keeping offsets for structural matching."""
+    output = list(text)
+    quote = None
+    escaped = False
+    for index, char in enumerate(text):
+        if quote is not None:
+            output[index] = " "
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in ("'", '"'):
+            output[index] = " "
+            quote = char
+    return "".join(output)
+
+
+def _closing_paren(code: str, opening: int) -> int | None:
+    depth = 0
+    for index in range(opening, len(code)):
+        if code[index] == "(":
+            depth += 1
+        elif code[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _file_argument_has_dynamic_rn(text: str, code: str, start: int, end: int) -> bool:
+    """Require the RN resolver *inside* the relevant new File argument."""
+    for match in re.finditer(r"\bnew\s+File\s*\(", code[start:end]):
+        file_open = start + match.end() - 1
+        file_close = _closing_paren(code, file_open)
+        if file_close is None or file_close >= end:
+            continue
+        argument = text[file_open + 1:file_close]
+        argument_code = code[file_open + 1:file_close]
+        if RN_DYNAMIC_REQUIRE.search(argument) and (
+            ".execute(" in argument_code or "providers.exec" in argument_code
+        ):
+            return True
+    return False
+
+
 def _dynamic_rn_include_detected(text: str) -> bool:
-    """Recognize only the two source-backed dynamic RN includeBuild shapes in scope.
+    """Recognize scoped inline/variable RN wiring, not unrelated nearby text.
 
-    This does not execute Node or Gradle. It proves only that settings.gradle wires the
-    RN Gradle Plugin through the specific require.resolve(package.json, paths=[...])
-    expression used by observed production React Native apps.
+    This scanner is intentionally limited to known Node-backed patterns. It does
+    not execute Gradle/Groovy or claim to resolve arbitrary build expressions.
     """
-    for match in RN_DYNAMIC_REQUIRE.finditer(text):
-        # MetaMask-style inline form: includeBuild(new File([..., require.resolve(...) ...]))
-        before = text[max(0, match.start() - 700):match.start()]
-        include_pos = before.rfind("includeBuild")
-        if include_pos >= 0:
-            segment = before[include_pos:]
-            if re.search(r"\bincludeBuild\s*\(\s*new\s+File\s*\(", segment):
-                return True
+    code = _gradle_code_without_strings(text)
 
-        # Mattermost-style variable form: def plugin = new File(...require.resolve...)
-        # followed by includeBuild(plugin). Keep this deliberately narrow.
-        prefix = text[max(0, match.start() - 1600):match.start()]
-        definitions = list(re.finditer(
-            r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+File\s*\(", prefix
-        ))
-        if definitions:
-            variable = definitions[-1].group(1)
-            after = text[match.end():match.end() + 2200]
-            if re.search(rf"\bincludeBuild\s*\(\s*{re.escape(variable)}\s*\)", after):
-                return True
+    # Inline: includeBuild(new File([...require.resolve(...)...].execute(...)))
+    for include in re.finditer(r"\bincludeBuild\s*\(", code):
+        opening = include.end() - 1
+        closing = _closing_paren(code, opening)
+        if closing is not None and _file_argument_has_dynamic_rn(
+            text, code, opening + 1, closing
+        ):
+            return True
+
+    # Variable: def plugin = new File(providers.exec {...require.resolve...})
+    # followed by includeBuild(plugin). Both must refer to the same variable.
+    for definition in re.finditer(
+        r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+File\s*\(", code
+    ):
+        file_open = definition.end() - 1
+        file_close = _closing_paren(code, file_open)
+        if file_close is None or not _file_argument_has_dynamic_rn(
+            text, code, definition.start(), file_close + 1
+        ):
+            continue
+        variable = definition.group(1)
+        after = code[file_close + 1:file_close + 2201]
+        if re.search(rf"\bincludeBuild\s*\(\s*{re.escape(variable)}\s*\)", after):
+            return True
     return False
 
 
@@ -336,6 +443,7 @@ def collect_agp(repo: Path, project: Path) -> ResolvedFact:
     )
     evidence: list[Evidence] = []
     unsupported_layout = False
+    plugin_aliases: set[str] = set()
     versionless_declaration = False
     malformed = False
 
@@ -352,8 +460,7 @@ def collect_agp(repo: Path, project: Path) -> ResolvedFact:
         if content is None:
             continue
         text = _strip_comments(content)
-        if ANDROID_ALIAS.search(text):
-            unsupported_layout = True
+        plugin_aliases.update(match.group(1) for match in ANDROID_ALIAS.finditer(text))
         plugin_matches = list(PLUGIN_VERSION.finditer(text))
         android_id_matches = list(ANDROID_ID.finditer(text))
         if len(android_id_matches) > len(plugin_matches) or UNVERSIONED_CLASSPATH.search(text):
@@ -368,6 +475,9 @@ def collect_agp(repo: Path, project: Path) -> ResolvedFact:
             evidence.append(Evidence(value, EvidenceScope.DECLARED, rel, ("com.android.tools.build:gradle classpath",)))
             if not VERSION.fullmatch(value):
                 malformed = True
+
+    if plugin_aliases and not _catalog_aliases_proven_kotlin(project, plugin_aliases):
+        unsupported_layout = True
 
     rn_evidence, rn_issue, rn_seen = _discover_rn_local_dependency(repo, project)
     evidence.extend(rn_evidence)

@@ -256,6 +256,27 @@ def test_cli_unknown_exit_three(tmp_path, capsys):
     assert doc["findings"][0]["status"] == "not_evaluated"
 
 
+@pytest.mark.parametrize("args", [
+    ["scan", ".", "unexpected"],
+    ["--invalid-option"],
+    [".", "extra"],
+])
+def test_cli_syntax_errors_exit_four(args, capsys):
+    assert main(args) == 4
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "INPUT ERROR:" in captured.err
+
+
+def test_cli_help_remains_exit_zero(capsys):
+    with pytest.raises(SystemExit) as caught:
+        main(["--help"])
+    assert caught.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out
+    assert captured.err == ""
+
+
 def test_missing_directory_exit_four(tmp_path, capsys):
     assert main(["scan", str(tmp_path / "missing")]) == 4
     captured = capsys.readouterr()
@@ -295,3 +316,91 @@ def test_resolved_fact_without_value_does_not_crash():
     gradle = ResolvedFact("gradle", "9.4.1", ResolutionStatus.RESOLVED)
     finding = evaluate_agp_gradle(missing_value, gradle)
     assert finding.status is RuleStatus.NOT_EVALUATED
+
+
+def test_verified_kotlin_alias_does_not_block_explicit_agp(tmp_path):
+    repo = make_repo(tmp_path, agp="9.2.0")
+    (repo / "android/build.gradle.kts").write_text(
+        'plugins { alias(libs.plugins.kotlin.android) }\n', encoding="utf-8"
+    )
+    catalog = repo / "android/gradle/libs.versions.toml"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text(
+        '[plugins]\n'
+        'kotlin-android = { id = "org.jetbrains.kotlin.android", version = "2.2.0" }\n',
+        encoding="utf-8",
+    )
+    analysis = run(str(repo))
+    assert analysis.agp.value == "9.2.0"
+    assert analysis.agp.resolution_status is ResolutionStatus.RESOLVED
+    assert analysis.status is CheckStatus.CHECKS_PASSED
+
+
+@pytest.mark.parametrize("plugin_id", [
+    "com.android.application",
+    "com.android.library",
+    "com.facebook.react",
+])
+def test_misleading_kotlin_alias_does_not_claim_agp_resolution(tmp_path, plugin_id):
+    repo = make_repo(tmp_path, agp="9.2.0")
+    (repo / "android/build.gradle.kts").write_text(
+        'plugins { alias(libs.plugins.kotlin.android) }\n', encoding="utf-8"
+    )
+    catalog = repo / "android/gradle/libs.versions.toml"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text(
+        f'[plugins]\nkotlin-android = {{ id = "{plugin_id}", version = "2.2.0" }}\n',
+        encoding="utf-8",
+    )
+    analysis = run(str(repo))
+    assert analysis.agp.resolution_status is ResolutionStatus.UNSUPPORTED_LAYOUT
+    assert analysis.status is CheckStatus.UNKNOWN
+
+
+def test_unverified_kotlin_alias_stays_unknown(tmp_path):
+    repo = make_repo(tmp_path, agp="9.2.0")
+    (repo / "android/build.gradle.kts").write_text(
+        'plugins { alias(libs.plugins.kotlin.android) }\n', encoding="utf-8"
+    )
+    analysis = run(str(repo))
+    assert analysis.agp.resolution_status is ResolutionStatus.UNSUPPORTED_LAYOUT
+    assert analysis.status is CheckStatus.UNKNOWN
+
+
+def test_custom_version_catalog_wiring_stays_unknown(tmp_path):
+    repo = make_repo(tmp_path, agp="9.2.0")
+    (repo / "android/build.gradle.kts").write_text(
+        'plugins { alias(libs.plugins.kotlin.android) }\n', encoding="utf-8"
+    )
+    (repo / "android/settings.gradle.kts").write_text(
+        'dependencyResolutionManagement { versionCatalogs {\n'
+        '  create("libs") { from(files("other.versions.toml")) }\n'
+        '} }\n', encoding="utf-8",
+    )
+    catalog = repo / "android/gradle/libs.versions.toml"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text(
+        '[plugins]\nkotlin-android = { id = "org.jetbrains.kotlin.android" }\n',
+        encoding="utf-8",
+    )
+    analysis = run(str(repo))
+    assert analysis.agp.resolution_status is ResolutionStatus.UNSUPPORTED_LAYOUT
+    assert analysis.status is CheckStatus.UNKNOWN
+
+
+def test_duplicate_kotlin_alias_catalog_is_unknown(tmp_path):
+    repo = make_repo(tmp_path, agp="9.2.0")
+    (repo / "android/build.gradle.kts").write_text(
+        'plugins { alias(libs.plugins.kotlin.android) }\n', encoding="utf-8"
+    )
+    catalog = repo / "android/gradle/libs.versions.toml"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text(
+        '[plugins]\n'
+        'kotlin-android = { id = "org.jetbrains.kotlin.android" }\n'
+        'kotlin_android = { id = "org.jetbrains.kotlin.android" }\n',
+        encoding="utf-8",
+    )
+    analysis = run(str(repo))
+    assert analysis.agp.resolution_status is ResolutionStatus.UNSUPPORTED_LAYOUT
+    assert analysis.status is CheckStatus.UNKNOWN
