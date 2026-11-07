@@ -2,9 +2,9 @@
 
 Evidence-backed native dependency tracing and scoped upgrade verification for React Native / Android.
 
-**Current main-branch capability:** the original offline, read-only R02 AGP/Gradle scanner. Its supported command is still `rn-readiness`.
+**Installed CLI scope:** `rn-readiness` remains the R02 AGP/Gradle scanner. The independent experimental `nativory-windows-doctor` command performs read-only Windows native log triage (R03/R04); it does not change R02 scan results.
 
-**Experimental development:** native artifact inspection, FBJNI verification, Evidence Bridge and the new `nativory` CLI alias are in [Draft PR #2](https://github.com/Kaan081/Nativory/pull/2). They are not yet merged into `main`.
+**Additional pilots:** controlled wrapper repair and native evidence bridge remain separate `tools/` experiments, outside the installed R02 scanner. [Draft PR #2](https://github.com/Kaan081/Nativory/pull/2) tracks separate native artifact / CLI work.
 
 **Legacy compatibility:** the Python package remains `rn_readiness` and the distribution remains `rn-readiness-spike`.
 
@@ -204,3 +204,9 @@ This repository is an engineering prototype, not a release certification product
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+## Windows Native Doctor (experimental)
+
+Read-only R03/R04 triage for Windows C++ runtime linker signatures and Ninja `mkdir` long-path failures. **Signature correlation is not root-cause proof, and a `NO_MATCH` result is not a healthy-build verdict.** No Gradle, Ninja or CMake execution, file repairs, or APK certification.
+
+See [Windows Native Doctor pilot](docs/WINDOWS_NATIVE_DOCTOR_PILOT.md) for evidence requirements, bounded inputs, exit codes, and examples.
