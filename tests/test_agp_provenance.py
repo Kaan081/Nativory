@@ -250,3 +250,29 @@ def test_dynamic_require_resolve_is_read_only_and_deterministic(tmp_path):
     after = {p.relative_to(repo).as_posix(): p.read_bytes() for p in repo.rglob("*") if p.is_file()}
     assert first == second
     assert before == after
+
+
+@pytest.mark.parametrize("settings", [
+    '''
+includeBuild(new File("../unrelated-plugin"))
+def debug = "require.resolve('@react-native/gradle-plugin/package.json', { paths: [require.resolve('react-native/package.json')] })"
+''',
+    '''
+def unrelated = new File("../unrelated-plugin")
+def debug = "require.resolve('@react-native/gradle-plugin/package.json', { paths: [require.resolve('react-native/package.json')] })"
+includeBuild(unrelated)
+''',
+])
+def test_unrelated_dynamic_require_is_not_provenance(
+    tmp_path, settings
+):
+    repo = make_dynamic_rn(tmp_path, style="metamask")
+
+    (repo / "android/settings.gradle").write_text(
+        settings, encoding="utf-8"
+    )
+
+    analysis = run(str(repo))
+
+    assert analysis.agp.value is None
+    assert analysis.finding.status is RuleStatus.NOT_EVALUATED

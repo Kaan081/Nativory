@@ -176,33 +176,86 @@ def _parse_plugin_catalog(
     return Evidence(values[0], EvidenceScope.LOCAL_DEPENDENCY, source, path), None
 
 
+def _gradle_code_without_strings(text: str) -> str:
+    """Mask quoted contents while keeping offsets for structural matching."""
+    output = list(text)
+    quote = None
+    escaped = False
+    for index, char in enumerate(text):
+        if quote is not None:
+            output[index] = " "
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in ("'", '"'):
+            output[index] = " "
+            quote = char
+    return "".join(output)
+
+
+def _closing_paren(code: str, opening: int) -> int | None:
+    depth = 0
+    for index in range(opening, len(code)):
+        if code[index] == "(":
+            depth += 1
+        elif code[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _file_argument_has_dynamic_rn(text: str, code: str, start: int, end: int) -> bool:
+    """Require the RN resolver *inside* the relevant new File argument."""
+    for match in re.finditer(r"\bnew\s+File\s*\(", code[start:end]):
+        file_open = start + match.end() - 1
+        file_close = _closing_paren(code, file_open)
+        if file_close is None or file_close >= end:
+            continue
+        argument = text[file_open + 1:file_close]
+        argument_code = code[file_open + 1:file_close]
+        if RN_DYNAMIC_REQUIRE.search(argument) and (
+            ".execute(" in argument_code or "providers.exec" in argument_code
+        ):
+            return True
+    return False
+
+
 def _dynamic_rn_include_detected(text: str) -> bool:
-    """Recognize only the two source-backed dynamic RN includeBuild shapes in scope.
+    """Recognize scoped inline/variable RN wiring, not unrelated nearby text.
 
-    This does not execute Node or Gradle. It proves only that settings.gradle wires the
-    RN Gradle Plugin through the specific require.resolve(package.json, paths=[...])
-    expression used by observed production React Native apps.
+    This scanner is intentionally limited to known Node-backed patterns. It does
+    not execute Gradle/Groovy or claim to resolve arbitrary build expressions.
     """
-    for match in RN_DYNAMIC_REQUIRE.finditer(text):
-        # MetaMask-style inline form: includeBuild(new File([..., require.resolve(...) ...]))
-        before = text[max(0, match.start() - 700):match.start()]
-        include_pos = before.rfind("includeBuild")
-        if include_pos >= 0:
-            segment = before[include_pos:]
-            if re.search(r"\bincludeBuild\s*\(\s*new\s+File\s*\(", segment):
-                return True
+    code = _gradle_code_without_strings(text)
 
-        # Mattermost-style variable form: def plugin = new File(...require.resolve...)
-        # followed by includeBuild(plugin). Keep this deliberately narrow.
-        prefix = text[max(0, match.start() - 1600):match.start()]
-        definitions = list(re.finditer(
-            r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+File\s*\(", prefix
-        ))
-        if definitions:
-            variable = definitions[-1].group(1)
-            after = text[match.end():match.end() + 2200]
-            if re.search(rf"\bincludeBuild\s*\(\s*{re.escape(variable)}\s*\)", after):
-                return True
+    # Inline: includeBuild(new File([...require.resolve(...)...].execute(...)))
+    for include in re.finditer(r"\bincludeBuild\s*\(", code):
+        opening = include.end() - 1
+        closing = _closing_paren(code, opening)
+        if closing is not None and _file_argument_has_dynamic_rn(
+            text, code, opening + 1, closing
+        ):
+            return True
+
+    # Variable: def plugin = new File(providers.exec {...require.resolve...})
+    # followed by includeBuild(plugin). Both must refer to the same variable.
+    for definition in re.finditer(
+        r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+File\s*\(", code
+    ):
+        file_open = definition.end() - 1
+        file_close = _closing_paren(code, file_open)
+        if file_close is None or not _file_argument_has_dynamic_rn(
+            text, code, definition.start(), file_close + 1
+        ):
+            continue
+        variable = definition.group(1)
+        after = code[file_close + 1:file_close + 2201]
+        if re.search(rf"\bincludeBuild\s*\(\s*{re.escape(variable)}\s*\)", after):
+            return True
     return False
 
 
