@@ -90,6 +90,18 @@ def read_head(checkout: Path) -> str | None:
         return None
 
 
+def tracked_sources_clean(checkout: Path) -> bool:
+    """Reject modified tracked files, including staged and unstaged changes."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(checkout), "diff", "--quiet", "HEAD", "--"],
+            capture_output=True, text=True, timeout=15,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def scanner_report(scan_root: Path) -> dict:
     from rn_readiness.cli import run
     from rn_readiness.report import to_dict
@@ -99,7 +111,8 @@ def scanner_report(scan_root: Path) -> dict:
 
 def inspect_case(case: dict, checkouts: Path, truth: dict | None = None,
                  *, scan: Callable[[Path], dict] = scanner_report,
-                 get_head: Callable[[Path], str | None] = read_head) -> dict:
+                 get_head: Callable[[Path], str | None] = read_head,
+                 get_clean: Callable[[Path], bool] = tracked_sources_clean) -> dict:
     """Inspect only a verified pinned checkout; never attempt repair/fetch/install."""
     case_id = case["id"]
     result = {"id": case_id, "kind": case["kind"], "commit": case["commit"],
@@ -109,6 +122,9 @@ def inspect_case(case: dict, checkouts: Path, truth: dict | None = None,
         return result
     if get_head(checkout) != case["commit"]:
         result["state"] = "revision_mismatch"
+        return result
+    if not get_clean(checkout):
+        result["state"] = "tracked_sources_modified"
         return result
     scan_root = (checkout / case["scan_root"]).resolve()
     if not scan_root.is_relative_to(checkout.resolve()) or not scan_root.is_dir():

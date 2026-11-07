@@ -68,8 +68,12 @@ py scripts/app_corpus_v2.py --manifest docs/corpus/R02_APP_CORPUS_V2.json --chec
 ```
 
 A partially populated corpus still writes a result with `missing_checkout`,
-`revision_mismatch` or `scan_root_missing` states. It returns exit code `2`
-until all selected checkouts are available; **partial runs are not acceptance**.
+`revision_mismatch`, `tracked_sources_modified` or `scan_root_missing` states.
+Matching commit SHA is insufficient: staged and unstaged changes to tracked
+files invalidate the snapshot. Ignored node_modules is still allowed.
+Untracked non-ignored files are not yet covered by this guard. The harness
+returns exit code `2` until all selected checkouts are available; **partial
+runs are not acceptance**.
 It also returns `2` for a mismatch against supplied manual or runtime
 truth. These assertions still depend on human evidence review. Output cannot
 be placed inside the checkout tree. No checkout is created or modified.
