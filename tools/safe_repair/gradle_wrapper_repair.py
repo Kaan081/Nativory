@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import difflib
+from contextlib import contextmanager
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / 'src') not in sys.path:
@@ -224,17 +225,135 @@ def run_gradle_help(project: Path) -> tuple[bool, int | None, str]:
     return (completed.returncode == 0, completed.returncode, output)
 
 
-def execute(plan_path: Path, approval_id: str) -> dict:
+@contextmanager
+def project_repair_lock(project: Path):
+    """Best-effort cross-process exclusion among cooperating Nativory repair commands.
+
+    Lock file lives outside the project and is deliberately retained, so we do
+    not create an unlink/recreate race. This does not lock non-Nativory editors.
+    """
+    project = project.expanduser().resolve(strict=True)
+    lock_dir = Path(tempfile.gettempdir()) / 'nativory-wrapper-repair-locks'
+    if lock_dir.is_symlink():
+        raise RepairRefused('REPAIR_LOCK_DIRECTORY_SYMLINK')
+    lock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = lock_dir / (sha(os.fsencode(str(project))) + '.lock')
+    if lock_path.is_symlink():
+        raise RepairRefused('REPAIR_LOCK_SYMLINK')
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(lock_path, flags, 0o600)
+    acquired = False
+    try:
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                # msvcrt.locking locks a byte range from the current file offset.
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b'0')
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except (OSError, PermissionError) as exc:
+            raise RepairRefused('REPAIR_ALREADY_RUNNING_OR_LOCK_UNAVAILABLE') from exc
+        yield
+    finally:
+        try:
+            if acquired:
+                if os.name == 'nt':
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def approved_plan(plan_path: Path, approval_id: str) -> dict:
     plan = read_plan(plan_path)
     if plan.get('status') != 'READY_FOR_APPROVAL' or not HEX.fullmatch(approval_id):
         raise RepairRefused('PLAN_NOT_APPROVABLE')
     if plan.get('plan_id') != approval_id:
         raise RepairRefused('PLAN_APPROVAL_TOKEN_MISMATCH')
-    recalculated = dict(plan)
-    recalculated.pop('plan_id', None)
-    if sha(json.dumps(recalculated, sort_keys=True, ensure_ascii=True).encode()) != approval_id:
+    payload = dict(plan)
+    payload.pop('plan_id', None)
+    if sha(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode()) != approval_id:
         raise RepairRefused('PLAN_CONTENT_TAMPERED')
+    return plan
+
+
+def recover(plan_path: Path, approval_id: str, *, restore: bool = False) -> dict:
+    """Inspect or explicitly restore the original wrapper after an interrupted repair.
+
+    Accepts only exact original/after bytes described by the approved plan. It
+    never runs Gradle and never rewrites an unexpected third-party change.
+    """
+    plan = approved_plan(plan_path, approval_id)
     project = Path(plan['project_root'])
+    with project_repair_lock(project):
+        target = wrapper_path(project)
+        backup = plan_path.with_name(plan_path.name + '.' + approval_id[:12] + '.original.bak')
+        report = {
+            'schema_version': SCHEMA,
+            'status': 'MANUAL_RECOVERY_REQUIRED_BACKUP_INVALID',
+            'plan_id': approval_id,
+            'project_root': str(project),
+            'wrapper_path': str(target),
+            'original_backup_path': str(backup),
+            'original_sha256': plan['before_sha256'],
+            'new_sha256': plan['after_sha256'],
+            'restore_requested': restore,
+            'gradle_or_build_verified': False,
+            'reason': None,
+        }
+        if not isinstance(plan.get('before_sha256'), str) or not HEX.fullmatch(plan['before_sha256']) or \
+                not isinstance(plan.get('after_sha256'), str) or not HEX.fullmatch(plan['after_sha256']):
+            raise RepairRefused('PLAN_HASHES_INVALID')
+        if backup.is_symlink() or not backup.is_file() or backup.stat().st_size > MAX_PROPERTIES:
+            report['reason'] = 'BACKUP_MISSING_UNSAFE_OR_TOO_LARGE'
+            return report
+        try:
+            original = read_wrapper(backup)
+        except (RepairRefused, OSError):
+            report['reason'] = 'BACKUP_UNREADABLE'
+            return report
+        if sha(original) != plan['before_sha256']:
+            report['reason'] = 'BACKUP_SHA256_MISMATCH'
+            return report
+        current = read_wrapper(target)
+        current_sha = sha(current)
+        report['current_sha256'] = current_sha
+        if current_sha == plan['before_sha256']:
+            report.update(status='ORIGINAL_ALREADY_PRESENT', reason='NO_RESTORE_NEEDED')
+        elif current_sha != plan['after_sha256']:
+            report.update(status='MANUAL_RECOVERY_REQUIRED_WRAPPER_CHANGED', reason='TARGET_NOT_APPROVED_POSTIMAGE')
+        elif not restore:
+            report.update(status='RESTORABLE_WRAPPER_AFTER_IMAGE', reason='EXPLICIT_RESTORE_REQUIRED')
+        else:
+            # Cooperative lock is held; a noncooperating process can still race.
+            if sha(read_wrapper(target)) != plan['after_sha256']:
+                report.update(status='MANUAL_RECOVERY_REQUIRED_WRAPPER_CHANGED', reason='TARGET_CHANGED_BEFORE_RESTORE')
+            else:
+                atomic_replace(target, original)
+                if sha(read_wrapper(target)) != plan['before_sha256']:
+                    report.update(status='MANUAL_RECOVERY_REQUIRED_ROLLBACK_ERROR', reason='POST_RESTORE_HASH_MISMATCH')
+                else:
+                    report.update(status='WRAPPER_RESTORED_FROM_BACKUP', reason='ORIGINAL_BYTES_RESTORED')
+        return report
+
+
+def execute(plan_path: Path, approval_id: str) -> dict:
+    plan = approved_plan(plan_path, approval_id)
+    project = Path(plan['project_root'])
+    with project_repair_lock(project):
+        return _execute_under_lock(plan_path, approval_id, plan, project)
+
+
+def _execute_under_lock(plan_path: Path, approval_id: str, plan: dict, project: Path) -> dict:
     current = make_plan(project)
     if current != plan:
         raise RepairRefused('PLAN_STALE_OR_PROJECT_CHANGED')
@@ -312,6 +431,13 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument('--trust-disposable-project', action='store_true', required=True,
                    help='Acknowledge that executing Gradle runs build logic; use a disposable trusted app')
     e.add_argument('--report', type=Path, required=True)
+    r = sub.add_parser('recover', help='Inspect or explicitly restore original wrapper bytes from backup')
+    r.add_argument('--plan', type=Path, required=True)
+    r.add_argument('--approve', required=True)
+    r.add_argument('--restore', action='store_true', help='Explicitly restore original wrapper from valid backup')
+    r.add_argument('--trust-disposable-project', action='store_true',
+                   help='Required with --restore; recovery does not execute Gradle')
+    r.add_argument('--report', type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == 'plan':
@@ -323,6 +449,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result['status'] in ('NO_REPAIR_NEEDED', 'READY_FOR_APPROVAL') else 2
         if args.report.exists() or args.report.is_symlink() or args.report.absolute() == args.plan.absolute():
             raise RepairRefused('REPORT_PATH_UNAVAILABLE')
+        if args.command == 'recover':
+            if args.restore and not args.trust_disposable_project:
+                raise RepairRefused('RESTORE_REQUIRES_EXPLICIT_TRUST')
+            report = recover(args.plan, args.approve, restore=args.restore)
+            store_json_exclusive(args.report, report)
+            print(report['status'], report['reason'])
+            return 0 if report['status'] in ('ORIGINAL_ALREADY_PRESENT',
+                                             'RESTORABLE_WRAPPER_AFTER_IMAGE',
+                                             'WRAPPER_RESTORED_FROM_BACKUP') else 2
         report = execute(args.plan, args.approve)
         store_json_exclusive(args.report, report)
         print(report['status'], report['reason'])
