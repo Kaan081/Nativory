@@ -27,7 +27,7 @@ UNVERSIONED_CLASSPATH = re.compile(
     r"(?:^|[{};])\s*classpath\s*(?:\(\s*)?['\"]com\.android\.tools\.build:gradle['\"]",
     re.MULTILINE,
 )
-ANDROID_ALIAS = re.compile(r"\balias\s*\(\s*libs\.plugins\.[A-Za-z_][A-Za-z0-9_.]*\s*\)")
+ANDROID_ALIAS = re.compile(r"\balias\s*\(\s*libs\.plugins\.([A-Za-z_][A-Za-z0-9_.]*)\s*\)")
 ANDROID_ID = re.compile(
     r"(?:^|[{};])\s*id\s*(?:\(\s*['\"]com\.android\.(?:application|library)['\"]\s*\)"
     r"|\s+['\"]com\.android\.(?:application|library)['\"])",
@@ -69,6 +69,60 @@ def _safe_read(path: Path) -> str | None:
 def _strip_comments(content: str) -> str:
     text = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
     return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+
+
+def _catalog_aliases_proven_kotlin(project: Path, aliases: set[str]) -> bool:
+    """Ignore an alias only when the local catalog proves a Kotlin Android ID.
+
+    The narrow inline-TOML subset is deliberate. Missing, unreadable, ambiguous,
+    or unsupported catalog declarations remain UNKNOWN rather than guessing.
+    """
+    # Custom catalog wiring can override the default libs accessor. Do not infer
+    # its identity from gradle/libs.versions.toml in that case.
+    for settings_name in ("settings.gradle", "settings.gradle.kts"):
+        try:
+            settings = _safe_read(project / settings_name)
+        except OSError:
+            return False
+        if settings is not None and re.search(r"\bversionCatalogs\b", _strip_comments(settings)):
+            return False
+
+    try:
+        catalog = _safe_read(project / "gradle/libs.versions.toml")
+    except OSError:
+        return False
+    if catalog is None:
+        return False
+
+    section = None
+    verified: set[str] = set()
+    for line in catalog.splitlines():
+        header = TOML_SECTION.match(line)
+        if header:
+            section = header.group(1).strip()
+            continue
+        if section != "plugins":
+            continue
+        declaration = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*=", line)
+        if declaration is None:
+            continue
+        # Gradle accessors normalize version-catalog - and _ separators to dots.
+        alias = re.sub(r"[-_]", ".", declaration.group(1))
+        if alias not in aliases:
+            continue
+        if alias in verified:
+            return False  # Duplicate/colliding catalog keys remain ambiguous.
+        entry = re.fullmatch(
+            r"""\s*[A-Za-z_][A-Za-z0-9_.-]*\s*=\s*\{\s*id\s*=\s*["']([^"']+)["']
+                \s*(?:,\s*version(?:\.ref)?\s*=\s*["'][^"']+["'])?
+                \s*\}\s*(?:\#.*)?""",
+            line,
+            re.VERBOSE,
+        )
+        if entry is None or entry.group(1) != "org.jetbrains.kotlin.android":
+            return False
+        verified.add(alias)
+    return verified == aliases
 
 
 def project_android_root(repo: Path) -> Path:
@@ -389,6 +443,7 @@ def collect_agp(repo: Path, project: Path) -> ResolvedFact:
     )
     evidence: list[Evidence] = []
     unsupported_layout = False
+    plugin_aliases: set[str] = set()
     versionless_declaration = False
     malformed = False
 
@@ -405,8 +460,7 @@ def collect_agp(repo: Path, project: Path) -> ResolvedFact:
         if content is None:
             continue
         text = _strip_comments(content)
-        if ANDROID_ALIAS.search(text):
-            unsupported_layout = True
+        plugin_aliases.update(match.group(1) for match in ANDROID_ALIAS.finditer(text))
         plugin_matches = list(PLUGIN_VERSION.finditer(text))
         android_id_matches = list(ANDROID_ID.finditer(text))
         if len(android_id_matches) > len(plugin_matches) or UNVERSIONED_CLASSPATH.search(text):
@@ -421,6 +475,9 @@ def collect_agp(repo: Path, project: Path) -> ResolvedFact:
             evidence.append(Evidence(value, EvidenceScope.DECLARED, rel, ("com.android.tools.build:gradle classpath",)))
             if not VERSION.fullmatch(value):
                 malformed = True
+
+    if plugin_aliases and not _catalog_aliases_proven_kotlin(project, plugin_aliases):
+        unsupported_layout = True
 
     rn_evidence, rn_issue, rn_seen = _discover_rn_local_dependency(repo, project)
     evidence.extend(rn_evidence)
