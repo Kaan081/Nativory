@@ -1,0 +1,148 @@
+// Nativory experimental selected-AAR probe v0.2
+// Informational task: exit 0 means the query ran, NOT that requested artifact was selected.
+// External init script; does not modify the inspected Android project's sources.
+// Only inspect trusted Gradle projects. Gradle evaluates project build scripts.
+import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.attributes.Attribute
+import java.security.MessageDigest
+import java.util.Locale
+import java.util.zip.ZipFile
+
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        project.tasks.register('nativoryTraceSelectedAar') {
+            doLast {
+                def requested = project.providers.gradleProperty('nativoryCoordinate').orNull
+                if (!(requested instanceof String) ||
+                        !(requested ==~ /[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+/)) {
+                    throw new GradleException('NATIVORY_INVALID_EXACT_MAVEN_COORDINATE')
+                }
+                def parts = requested.split(':')
+                def configurationName = project.providers.gradleProperty('nativoryConfiguration')
+                    .orElse('debugRuntimeClasspath').get()
+                if (!(configurationName in ['debugRuntimeClasspath', 'releaseRuntimeClasspath'])) {
+                    throw new GradleException('NATIVORY_UNSUPPORTED_RUNTIME_CONFIGURATION')
+                }
+                def runtime = project.configurations.findByName(configurationName)
+                if (runtime == null || !runtime.canBeResolved) {
+                    throw new GradleException('NATIVORY_RUNTIME_CONFIGURATION_UNAVAILABLE')
+                }
+                def aarView = runtime.incoming.artifactView {
+                    componentFilter { id ->
+                        id instanceof ModuleComponentIdentifier &&
+                            id.group == parts[0] && id.module == parts[1] && id.version == parts[2]
+                    }
+                    attributes {
+                        attribute(Attribute.of('artifactType', String), 'aar')
+                    }
+                }
+                def matches = aarView.artifacts.artifacts.toList()
+                if (matches.isEmpty()) {
+                    // An absent AAR match is not necessarily an absent module. Inspect the
+                    // resolved component graph to distinguish a different selected version
+                    // from a matching component whose AAR could not be observed.
+                    def selectedVersions = runtime.incoming.resolutionResult.allComponents
+                        .collect { it.id }
+                        .findAll { id ->
+                            id instanceof ModuleComponentIdentifier &&
+                                id.group == parts[0] && id.module == parts[1]
+                        }
+                        .collect { it.version }
+                        .unique()
+                        .sort()
+                    def exactComponentSelected = selectedVersions.contains(parts[2])
+                    def resultStatus = exactComponentSelected ?
+                        'INCONCLUSIVE_SELECTED_COMPONENT_WITHOUT_AAR' : 'NOT_SELECTED'
+                    def reason = selectedVersions.isEmpty() ?
+                        'MODULE_NOT_IN_RESOLVED_CONFIGURATION' :
+                        (exactComponentSelected ? 'EXACT_COMPONENT_SELECTED_BUT_AAR_NOT_OBSERVED' :
+                            'DIFFERENT_VERSION_SELECTED')
+                    println('NATIVORY_SELECTED_AAR_V2:' + JsonOutput.toJson([
+                        schema_version: 'nativory-selected-aar-probe-0.2',
+                        status: resultStatus,
+                        scope: 'APP_RESOLVED_RUNTIME_AAR_ONLY',
+                        configuration: configurationName,
+                        requested_coordinate: requested,
+                        selected_coordinate: null,
+                        selected_component_versions: selectedVersions,
+                        artifact_name: null,
+                        artifact_sha256: null,
+                        artifact_bytes: null,
+                        native_entry_count: null,
+                        native_entry_paths: [],
+                        reason: reason,
+                        actual_apk_packaging: 'NOT_VERIFIED',
+                        runtime_loading: 'NOT_VERIFIED',
+                        third_party_checksum_match: 'NOT_VERIFIED',
+                        root_cause_or_fix: 'NOT_VERIFIED'
+                    ]))
+                    return
+                }
+                if (matches.size() != 1) {
+                    throw new GradleException('NATIVORY_MULTIPLE_SELECTED_AAR_ARTIFACTS_' + matches.size())
+                }
+                def selected = matches[0]
+                def id = selected.id.componentIdentifier
+                def artifact = selected.file
+                if (!(id instanceof ModuleComponentIdentifier) || !artifact.isFile() ||
+                        !artifact.name.toLowerCase(Locale.ROOT).endsWith('.aar')) {
+                    throw new GradleException('NATIVORY_SELECTED_ARTIFACT_NOT_AAR')
+                }
+                if (artifact.length() > 768L * 1024L * 1024L) {
+                    throw new GradleException('NATIVORY_SELECTED_AAR_TOO_LARGE')
+                }
+                def md = MessageDigest.getInstance('SHA-256')
+                artifact.withInputStream { stream ->
+                    byte[] buffer = new byte[65536]
+                    int count
+                    while ((count = stream.read(buffer)) != -1) {
+                        md.update(buffer, 0, count)
+                    }
+                }
+                def hex = md.digest().collect { String.format('%02x', it & 255) }.join('')
+                def nativePaths = []
+                int totalEntries = 0
+                ZipFile zip = new ZipFile(artifact)
+                try {
+                    def entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        def entry = entries.nextElement()
+                        totalEntries++
+                        if (totalEntries > 20000) {
+                            throw new GradleException('NATIVORY_AAR_TOO_MANY_ENTRIES')
+                        }
+                        if (!entry.isDirectory() && entry.name.toLowerCase(Locale.ROOT).endsWith('.so')) {
+                            nativePaths.add(entry.name)
+                            if (nativePaths.size() > 512) {
+                                throw new GradleException('NATIVORY_AAR_TOO_MANY_NATIVE_ENTRIES')
+                            }
+                        }
+                    }
+                } finally {
+                    zip.close()
+                }
+                nativePaths.sort()
+                println('NATIVORY_SELECTED_AAR_V2:' + JsonOutput.toJson([
+                    schema_version: 'nativory-selected-aar-probe-0.2',
+                    status: 'SCOPED_APP_SELECTED_AAR_OBSERVED',
+                    scope: 'APP_RESOLVED_RUNTIME_AAR_ONLY',
+                    configuration: configurationName,
+                    requested_coordinate: requested,
+                    selected_coordinate: "${id.group}:${id.module}:${id.version}",
+                    selected_component_versions: [id.version],
+                    artifact_name: artifact.name,
+                    artifact_sha256: hex,
+                    artifact_bytes: artifact.length(),
+                    native_entry_count: nativePaths.size(),
+                    native_entry_paths: nativePaths,
+                    reason: 'EXACT_AAR_SELECTED_AND_OBSERVED',
+                    actual_apk_packaging: 'NOT_VERIFIED',
+                    runtime_loading: 'NOT_VERIFIED',
+                    third_party_checksum_match: 'NOT_VERIFIED',
+                    root_cause_or_fix: 'NOT_VERIFIED'
+                ]))
+            }
+        }
+    }
+}
