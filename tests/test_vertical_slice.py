@@ -256,6 +256,27 @@ def test_cli_unknown_exit_three(tmp_path, capsys):
     assert doc["findings"][0]["status"] == "not_evaluated"
 
 
+@pytest.mark.parametrize("args", [
+    ["scan", ".", "unexpected"],
+    ["--invalid-option"],
+    [".", "extra"],
+])
+def test_cli_syntax_errors_exit_four(args, capsys):
+    assert main(args) == 4
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "INPUT ERROR:" in captured.err
+
+
+def test_cli_help_remains_exit_zero(capsys):
+    with pytest.raises(SystemExit) as caught:
+        main(["--help"])
+    assert caught.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out
+    assert captured.err == ""
+
+
 def test_missing_directory_exit_four(tmp_path, capsys):
     assert main(["scan", str(tmp_path / "missing")]) == 4
     captured = capsys.readouterr()
