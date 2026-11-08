@@ -4,7 +4,7 @@ Evidence-backed native dependency tracing and scoped upgrade verification for Re
 
 **Installed CLI scope:** `rn-readiness` remains the R02 AGP/Gradle scanner. The independent experimental `nativory-windows-doctor` command performs read-only Windows native log triage (R03/R04); it does not change R02 scan results.
 
-**Additional pilots:** controlled wrapper repair and native evidence bridge remain separate `tools/` experiments, outside the installed R02 scanner. [Draft PR #2](https://github.com/Kaan081/Nativory/pull/2) tracks separate native artifact / CLI work.
+**Additional pilots:** controlled wrapper repair and native evidence bridge remain separate `tools/` experiments, outside the installed R02 scanner. [Draft PR #2](https://github.com/kaanbartubozkurt/Nativory/pull/2) tracks separate native artifact / CLI work.
 
 **Legacy compatibility:** the Python package remains `rn_readiness` and the distribution remains `rn-readiness-spike`.
 
