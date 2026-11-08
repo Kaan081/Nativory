@@ -210,3 +210,10 @@ MIT. See [`LICENSE`](LICENSE).
 Read-only R03/R04 triage for Windows C++ runtime linker signatures and Ninja `mkdir` long-path failures. **Signature correlation is not root-cause proof, and a `NO_MATCH` result is not a healthy-build verdict.** No Gradle, Ninja or CMake execution, file repairs, or APK certification.
 
 See [Windows Native Doctor pilot](docs/WINDOWS_NATIVE_DOCTOR_PILOT.md) for evidence requirements, bounded inputs, exit codes, and examples.
+## Unified Scoped Diagnosis (integration pilot)
+
+The new `nativory scan PROJECT --json` entry point composes the installed R02 AGP/Gradle minimum check with optional read-only Windows R03/R04 triage using `--build-log`. Existing `rn-readiness` and `nativory-windows-doctor` interfaces are unchanged.
+
+If no native build log is supplied, R03/R04 are **NOT_EVALUATED**, never a pass. Report and exit code 0 **do not** certify Android builds, APK/AAB artifacts, runtime or releases. No build tools are executed or project files repaired.
+
+See [Unified Scoped Diagnosis pilot](docs/UNIFIED_DIAGNOSIS_PILOT.md) for CLI examples, status semantics and safety boundaries. AAR/ELF experiments and wrapper repair remain separate.
