@@ -7,6 +7,7 @@ React Native Gradle Plugin includeBuild -> local package -> version catalog path
 from __future__ import annotations
 
 import re
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 
 from .models import Evidence, EvidenceScope, ResolvedFact, ResolutionStatus
@@ -287,49 +288,74 @@ def _code_matches(pattern: re.Pattern, text: str, code: str, keyword: str):
                 yield match
 
 
-def _closing_paren(code: str, opening: int) -> int | None:
-    depth = 0
-    for index in range(opening, len(code)):
-        if code[index] == "(":
-            depth += 1
-        elif code[index] == ")":
-            depth -= 1
-            if depth == 0:
-                return index
-    return None
+def _paren_closures(code: str) -> dict[int, int]:
+    """Match structural parentheses in one pass, including malformed input.
 
-
-def _file_argument_has_dynamic_rn(text: str, code: str, start: int, end: int) -> bool:
-    """Require the RN resolver *inside* the relevant new File argument."""
-    for match in re.finditer(r"\bnew\s+File\s*\(", code[start:end]):
-        file_open = start + match.end() - 1
-        file_close = _closing_paren(code, file_open)
-        if file_close is None or file_close >= end:
-            continue
-        argument = text[file_open + 1:file_close]
-        argument_code = code[file_open + 1:file_close]
-        if RN_DYNAMIC_REQUIRE.search(argument) and (
-            ".execute(" in argument_code or "providers.exec" in argument_code
-        ):
-            return True
-    return False
+    Unmatched opening parentheses have no entry. Text inside Gradle strings is
+    already blanked before this function is called.
+    """
+    stack: list[int] = []
+    closed: dict[int, int] = {}
+    for index, char in enumerate(code):
+        if char == "(":
+            stack.append(index)
+        elif char == ")" and stack:
+            closed[stack.pop()] = index
+    return closed
 
 
 def _dynamic_rn_include_detected(text: str) -> bool:
-    """Recognize scoped inline/variable RN wiring, not unrelated nearby text.
+    """Recognize scoped RN includeBuild wiring with bounded scanning work.
 
-    This scanner is intentionally limited to known Node-backed patterns. It does
-    not execute Gradle/Groovy or claim to resolve arbitrary build expressions.
+    One parentheses pass and pre-indexed candidate files avoid repeated scans
+    of nested/malformed includeBuild arguments. No Node or Gradle execution.
     """
     code = _gradle_code_without_strings(text)
+    closures = _paren_closures(code)
 
-    # Inline: includeBuild(new File([...require.resolve(...)...].execute(...)))
+    # Locate the literal RN resolver and execution marker only once. A valid
+    # new File argument must contain both, rather than unrelated nearby text.
+    rn_matches = list(RN_DYNAMIC_REQUIRE.finditer(text))
+    rn_starts = [match.start() for match in rn_matches]
+    exec_starts = [match.start() for match in re.finditer(r"\.execute\(|providers\.exec", code)]
+    if not rn_matches or not exec_starts:
+        return False
+
+    valid_files: list[tuple[int, int]] = []
+    valid_openings: set[int] = set()
+    for match in re.finditer(r"\bnew\s+File\s*\(", code):
+        file_open = match.end() - 1
+        file_close = closures.get(file_open)
+        if file_close is None:
+            continue
+        rn_idx = bisect_left(rn_starts, file_open + 1)
+        exec_idx = bisect_left(exec_starts, file_open + 1)
+        if (
+            rn_idx < len(rn_matches)
+            and rn_matches[rn_idx].end() <= file_close
+            and exec_idx < len(exec_starts)
+            and exec_starts[exec_idx] < file_close
+        ):
+            valid_files.append((match.start(), file_close))
+            valid_openings.add(file_open)
+    if not valid_files:
+        return False
+
+    # Answer the question "does this includeBuild enclose a valid new File?"
+    # in O(log n) rather than rescanning its potentially large argument.
+    starts = [start for start, _ in valid_files]
+    suffix_min_close = [0] * len(valid_files)
+    nearest_close = len(code)
+    for index in range(len(valid_files) - 1, -1, -1):
+        nearest_close = min(nearest_close, valid_files[index][1])
+        suffix_min_close[index] = nearest_close
     for include in re.finditer(r"\bincludeBuild\s*\(", code):
         opening = include.end() - 1
-        closing = _closing_paren(code, opening)
-        if closing is not None and _file_argument_has_dynamic_rn(
-            text, code, opening + 1, closing
-        ):
+        closing = closures.get(opening)
+        if closing is None:
+            continue
+        index = bisect_right(starts, opening)
+        if index < len(starts) and suffix_min_close[index] < closing:
             return True
 
     # Variable: def plugin = new File(providers.exec {...require.resolve...})
@@ -338,10 +364,8 @@ def _dynamic_rn_include_detected(text: str) -> bool:
         r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+File\s*\(", code
     ):
         file_open = definition.end() - 1
-        file_close = _closing_paren(code, file_open)
-        if file_close is None or not _file_argument_has_dynamic_rn(
-            text, code, definition.start(), file_close + 1
-        ):
+        file_close = closures.get(file_open)
+        if file_close is None or file_open not in valid_openings:
             continue
         variable = definition.group(1)
         after = code[file_close + 1:file_close + 2201]
