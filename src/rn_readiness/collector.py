@@ -231,23 +231,60 @@ def _parse_plugin_catalog(
 
 
 def _gradle_code_without_strings(text: str) -> str:
-    """Mask quoted contents while keeping offsets for structural matching."""
+    """Mask single/double and triple-quoted text; preserve exact offsets.
+
+    String *contents* must never become executable Gradle evidence. Literal
+    arguments to a genuine declaration are still read from the original text.
+    An unclosed quote masks through EOF, conservatively losing evidence.
+    """
     output = list(text)
-    quote = None
+    quote: str | None = None
     escaped = False
-    for index, char in enumerate(text):
-        if quote is not None:
-            output[index] = " "
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-        elif char in ("'", '"'):
-            output[index] = " "
-            quote = char
+    index = 0
+    while index < len(text):
+        if quote is None:
+            if text.startswith('"""', index) or text.startswith("'''", index):
+                quote = text[index:index + 3]
+            elif text[index] in ("'", '"'):
+                quote = text[index]
+            else:
+                index += 1
+                continue
+            width = len(quote)
+            output[index:index + width] = " " * width
+            index += width
+            escaped = False
+            continue
+
+        if escaped:
+            escaped = False
+        elif text[index] == "\\":
+            escaped = True
+        elif text.startswith(quote, index):
+            width = len(quote)
+            output[index:index + width] = " " * width
+            index += width
+            quote = None
+            continue
+        output[index] = " "
+        index += 1
     return "".join(output)
+
+
+def _code_matches(pattern: re.Pattern, text: str, code: str, keyword: str):
+    """Yield a declaration only when its defining keyword is real code.
+
+    The pattern must start with the declaration keyword after optional
+    punctuation/whitespace. Its quoted arguments are read from the original
+    text, but the keyword cannot originate inside a Gradle string literal.
+    """
+    for match in pattern.finditer(text):
+        prefix = text[match.start():match.end()]
+        token = re.search(rf"\b{re.escape(keyword)}\b", prefix)
+        if token is not None:
+            start = match.start() + token.start()
+            if code[start:start + len(keyword)] == keyword:
+                yield match
 
 
 def _closing_paren(code: str, opening: int) -> int | None:
@@ -394,8 +431,9 @@ def _discover_rn_local_dependency(repo: Path, project: Path) -> tuple[list[Evide
         if content is None:
             continue
         text = _strip_comments(content)
+        code = _gradle_code_without_strings(text)
 
-        for match in RN_INCLUDE_BUILD.finditer(text):
+        for match in _code_matches(RN_INCLUDE_BUILD, text, code, "includeBuild"):
             literal_seen = True
             raw_path = match.group(1)
             evidence.append(Evidence(
@@ -486,17 +524,22 @@ def collect_agp(repo: Path, project: Path) -> ResolvedFact:
         if content is None:
             continue
         text = _strip_comments(content)
-        plugin_aliases.update(match.group(1) for match in ANDROID_ALIAS.finditer(text))
-        plugin_matches = list(PLUGIN_VERSION.finditer(text))
-        android_id_matches = list(ANDROID_ID.finditer(text))
-        if len(android_id_matches) > len(plugin_matches) or UNVERSIONED_CLASSPATH.search(text):
+        code = _gradle_code_without_strings(text)
+        plugin_aliases.update(
+            match.group(1) for match in _code_matches(ANDROID_ALIAS, text, code, "alias")
+        )
+        plugin_matches = list(_code_matches(PLUGIN_VERSION, text, code, "id"))
+        android_id_matches = list(_code_matches(ANDROID_ID, text, code, "id"))
+        if len(android_id_matches) > len(plugin_matches) or any(
+            _code_matches(UNVERSIONED_CLASSPATH, text, code, "classpath")
+        ):
             versionless_declaration = True
         for match in plugin_matches:
             value = match.group(1)
             evidence.append(Evidence(value, EvidenceScope.DECLARED, rel, ("Android Gradle plugin declaration",)))
             if not VERSION.fullmatch(value):
                 malformed = True
-        for match in CLASSPATH_VERSION.finditer(text):
+        for match in _code_matches(CLASSPATH_VERSION, text, code, "classpath"):
             value = match.group(1)
             evidence.append(Evidence(value, EvidenceScope.DECLARED, rel, ("com.android.tools.build:gradle classpath",)))
             if not VERSION.fullmatch(value):
