@@ -316,9 +316,9 @@ def _dynamic_rn_include_detected(text: str) -> bool:
 def _dynamic_local_plugin_root(repo: Path, project: Path) -> tuple[Path | None, ResolutionStatus | None]:
     """Locate a conventional installed RN plugin without executing require.resolve.
 
-    We support only a single unambiguous local node_modules installation adjacent to
-    the scanned app root. Multiple plausible installations remain unsupported rather
-    than guessing Node's package-resolution precedence.
+    The Gradle expression resolves the plugin *relative to* react-native/package.json.
+    Its own nested node_modules takes precedence over the adjacent top-level plugin.
+    Unsupported redirects or multiple plausible installations must remain UNKNOWN.
     """
     bases: list[Path] = []
     for base in (repo, project.parent):
@@ -330,22 +330,48 @@ def _dynamic_local_plugin_root(repo: Path, project: Path) -> tuple[Path | None, 
             bases.append(normalized)
 
     installed: list[Path] = []
+    installed_rn: list[Path] = []
     for base in bases:
         node_modules = base / "node_modules"
         plugin_root = node_modules / "@react-native/gradle-plugin"
-        react_native_package = node_modules / "react-native/package.json"
-        if plugin_root.is_symlink() or react_native_package.is_symlink():
-            if plugin_root.exists() or react_native_package.exists():
-                return None, ResolutionStatus.UNSUPPORTED_LAYOUT
-        if plugin_root.is_dir() and react_native_package.is_file():
+        react_native_root = node_modules / "react-native"
+        react_native_package = react_native_root / "package.json"
+        nested_node_modules = react_native_root / "node_modules"
+        nested_plugin_root = nested_node_modules / "@react-native/gradle-plugin"
+
+        # Any redirect on the supported lookup chain can change Node's target.
+        # A broken symlink must be treated as unsupported too.
+        lookup_parts = (
+            node_modules, node_modules / "@react-native", plugin_root,
+            react_native_root, react_native_package, nested_node_modules,
+            nested_node_modules / "@react-native", nested_plugin_root,
+        )
+        if any(part.is_symlink() for part in lookup_parts):
+            return None, ResolutionStatus.UNSUPPORTED_LAYOUT
+
+        # Node searches from the react-native package before the app node_modules.
+        # Do not attribute a nested plugin to the adjacent (possibly older) catalog.
+        if nested_plugin_root.exists():
+            return None, ResolutionStatus.UNSUPPORTED_LAYOUT
+
+        if react_native_package.is_file():
             try:
-                normalized = plugin_root.resolve(strict=False)
+                normalized_rn = react_native_root.resolve(strict=False)
             except OSError:
                 return None, ResolutionStatus.MALFORMED_EVIDENCE
-            if normalized not in installed:
-                installed.append(normalized)
+            if normalized_rn not in installed_rn:
+                installed_rn.append(normalized_rn)
 
-    if len(installed) > 1:
+            if plugin_root.is_dir():
+                try:
+                    normalized = plugin_root.resolve(strict=False)
+                except OSError:
+                    return None, ResolutionStatus.MALFORMED_EVIDENCE
+                if normalized not in installed:
+                    installed.append(normalized)
+
+    # Even a second RN installation without a plugin makes the source ambiguous.
+    if len(installed_rn) > 1 or len(installed) > 1:
         return None, ResolutionStatus.UNSUPPORTED_LAYOUT
     if len(installed) == 1:
         return installed[0], None
