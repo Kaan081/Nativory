@@ -1,4 +1,4 @@
-"""Smoke-check the built wheel in an isolated, offline-installed venv.
+"""Smoke-check all three installed CLI entrypoints from an isolated wheel.
 
 Run with: python scripts/wheel_smoke.py
 This deliberately avoids the editable install used for the pytest job.
@@ -50,6 +50,10 @@ def main() -> None:
         scripts = venv / ("Scripts" if os.name == "nt" else "bin")
         python = scripts / ("python.exe" if os.name == "nt" else "python")
         cli = scripts / ("rn-readiness.exe" if os.name == "nt" else "rn-readiness")
+        unified_cli = scripts / ("nativory.exe" if os.name == "nt" else "nativory")
+        native_cli = scripts / (
+            "nativory-windows-doctor.exe" if os.name == "nt" else "nativory-windows-doctor"
+        )
         run(
             python, "-m", "pip", "install", "--no-index", "--find-links", wheels,
             "rn-readiness-spike", cwd=workspace,
@@ -60,8 +64,13 @@ def main() -> None:
             "assert load_agp_gradle_policy().minimum_by_series['9.2'] == '9.4.1'",
             cwd=workspace,
         )
-        run(cli, "--help", cwd=workspace)
-        run(cli, "--not-a-valid-option", cwd=workspace, expected=4)
+        # Every declared script must be present in the installed wheel and
+        # maintain the documented CLI usage-error exit code.
+        for entrypoint in (cli, unified_cli, native_cli):
+            if not entrypoint.is_file():
+                raise RuntimeError(f"Installed entrypoint missing: {entrypoint.name}")
+            run(entrypoint, "--help", cwd=workspace)
+            run(entrypoint, "--not-a-valid-option", cwd=workspace, expected=4)
 
         # Exercise the installed console entrypoint against a minimal actual scan.
         project = workspace / "fixture"
@@ -81,7 +90,72 @@ def main() -> None:
         if result.get("status") != "checks_passed":
             raise RuntimeError(f"Installed CLI did not pass fixture scan: {result!r}")
 
-        print("NATIVORY WHEEL SMOKE PASSED", flush=True)
+        # The unified CLI without a native log must report NOT_EVALUATED, not
+        # a healthy-build verdict. Preserve exact R02 component parity.
+        before = {
+            str(p.relative_to(project)): p.read_bytes()
+            for p in project.rglob("*") if p.is_file()
+        }
+        unified_without_log = json.loads(run(
+            unified_cli, "scan", project, "--json", cwd=workspace, expected=3,
+        ))
+        if unified_without_log["components"]["r02_agp_gradle"] != result:
+            raise RuntimeError("Installed unified CLI changed R02 component results")
+        if (
+            unified_without_log["summary"]["verdict"] != "REVIEW_REQUIRED"
+            or unified_without_log["components"]["windows_native_log_triage"]["status"]
+            != "NOT_EVALUATED"
+        ):
+            raise RuntimeError("Missing build log was incorrectly treated as evaluated")
+
+        # A synthetic Windows Ninja failure exercises the installed doctor
+        # without running Gradle, Ninja, CMake or any project executable.
+        build_log = workspace / "failed-build.log"
+        build_log.write_text(
+            "ninja: error: mkdir(" + "x" * 280 + "): No such file or directory\n",
+            encoding="utf-8",
+        )
+        native_args = (
+            "--build-log", build_log,
+            "--ninja-version", "1.10.2",
+            "--ninja-dir", r"C:\nv\android\app\.cxx\Debug\arm64-v8a",
+        )
+        doctor = json.loads(run(
+            native_cli, "--project", project, *native_args,
+            "--json", cwd=workspace,
+        ))
+        statuses = {item["rule"]: item["status"] for item in doctor["findings"]}
+        if statuses != {
+            "R03_WINDOWS_NDK_PATH": "NOT_EVALUATED",
+            "R04_NINJA_LONG_PATH": "SUSPECTED",
+        } or doctor["read_only"] is not True:
+            raise RuntimeError(f"Installed Windows doctor returned unexpected findings: {statuses!r}")
+
+        unified_with_log = json.loads(run(
+            unified_cli, "scan", project, *native_args,
+            "--json", cwd=workspace, expected=3,
+        ))
+        if unified_with_log["components"]["windows_native_log_triage"] != doctor:
+            raise RuntimeError("Installed unified CLI changed Windows doctor results")
+        if unified_with_log["components"]["r02_agp_gradle"] != result:
+            raise RuntimeError("Installed unified CLI changed R02 results with a log")
+        summary = unified_with_log["summary"]
+        if summary["verdict"] != "REVIEW_REQUIRED" or any(
+            summary[flag] is not False for flag in (
+                "android_build_verified", "apk_aab_verified",
+                "runtime_verified", "release_readiness_verified",
+            )
+        ):
+            raise RuntimeError("Native triage incorrectly certified build/release readiness")
+
+        after = {
+            str(p.relative_to(project)): p.read_bytes()
+            for p in project.rglob("*") if p.is_file()
+        }
+        if after != before:
+            raise RuntimeError("Installed CLI modified the fixture project")
+
+        print("NATIVORY WHEEL SMOKE PASSED (all three installed CLIs)", flush=True)
 
 
 if __name__ == "__main__":
