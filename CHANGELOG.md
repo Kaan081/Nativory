@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 — pilot candidate (not published by this PR)
+
+- package three read-only entry points: legacy `rn-readiness` (R02), independent `nativory-windows-doctor` (R03/R04), and composed `nativory scan`;
+- harden provenance, quoted Gradle evidence, bounded dynamic parsing, Windows Ninja path-length detection and report path redaction (#14–#18);
+- verify all three installed CLI entry points using an isolated wheel and independent output-parity checks on Windows/Linux CI (#19);
+- retain the legacy `rn-readiness-spike` distribution name and conservative uncertainty/exit-code contracts;
+- no claim of Android build success, root-cause certainty, broad production validation, or confirmed time savings.
+
 ## 0.1.3 — 2026-10-14
 
 - add narrow static recognition of production-observed React Native `require.resolve(...) → includeBuild(...)` plugin wiring;
