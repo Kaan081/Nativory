@@ -31,7 +31,7 @@ refused instead of silently returning `NO_MATCH`.
 ## Rules and states
 
 - **R03_WINDOWS_NDK_PATH**: compares selected `ld.lld` C++ runtime undefined-symbol signatures with the effective NDK path recorded in a supplied CMake cache. `android/local.properties` is read only for separately identified *declared* NDK evidence; it never establishes the effective path.
-- **R04_NINJA_LONG_PATH**: requires a `ninja: error: mkdir(...)` signature and a recoverable Ninja working directory; computes a Windows path length without accessing the generated tree. If the path reaches 260 characters and an explicitly provided Ninja version is earlier than 1.12.0, emits `SUSPECTED`.
+- **R04_NINJA_LONG_PATH**: requires a `ninja: error: mkdir(...)` signature and a recoverable Ninja working directory; computes the longest Windows path length across all matching `mkdir` failures in the bounded input log (in UTF-16 code units), without accessing the generated tree. If the path reaches 260 characters and an explicitly provided Ninja version is earlier than 1.12.0, emits `SUSPECTED`.
 
 `SUSPECTED` means a pattern fits the observed failure, **not that it proves the root cause**; `RISK_SIGNAL` is weaker; `NOT_EVALUATED` means evidence is missing, ambiguous, or not sufficient; and `NO_MATCH` means the configured signature was not observed, **not a successful build**. Exit `0` means the analysis ran, regardless of finding; exit `4` means bad or unreadable input.
 
