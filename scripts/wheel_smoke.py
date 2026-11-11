@@ -60,6 +60,13 @@ def main() -> None:
         )
         run(
             python, "-c",
+            "from importlib.metadata import version; "
+            "from rn_readiness import __version__; "
+            "assert version('rn-readiness-spike') == __version__",
+            cwd=workspace,
+        )
+        run(
+            python, "-c",
             "from rn_readiness.policy import load_agp_gradle_policy; "
             "assert load_agp_gradle_policy().minimum_by_series['9.2'] == '9.4.1'",
             cwd=workspace,

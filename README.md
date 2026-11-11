@@ -2,7 +2,7 @@
 
 Evidence-backed native dependency tracing and scoped upgrade verification for React Native / Android.
 
-**Installed CLI scope:** `rn-readiness` remains the R02 AGP/Gradle scanner. The independent experimental `nativory-windows-doctor` command performs read-only Windows native log triage (R03/R04); it does not change R02 scan results.
+**Installed CLI scope (0.2.0 pilot):** `rn-readiness` runs the R02 AGP/Gradle minimum check; `nativory-windows-doctor` performs independent read-only Windows native-log triage (R03/R04); `nativory scan` composes R02 with optional R03/R04 evidence. They are deliberately scoped, not Android build or release certification.
 
 **Additional pilots:** controlled wrapper repair and native evidence bridge remain separate `tools/` experiments, outside the installed R02 scanner. [Draft PR #2](https://github.com/kaanbartubozkurt/Nativory/pull/2) tracks separate native artifact / CLI work.
 
@@ -10,7 +10,7 @@ Evidence-backed native dependency tracing and scoped upgrade verification for Re
 
 **Principle:** Evidence before certainty.
 
-**Current scope:** one rule only — **R02: Android Gradle Plugin (AGP) ↔ Gradle minimum compatibility**.
+**Current scope:** R02 tests only the Android Gradle Plugin (AGP) ↔ Gradle *minimum* relationship. R03/R04 independently correlate selected Windows native build-log signatures with supplied evidence. All three entry points are read-only.
 
 The current scanner is intentionally conservative: if it cannot justify a toolchain fact from supported evidence, it returns an unresolved state and does **not** convert uncertainty into a compatibility failure.
 
@@ -133,6 +133,23 @@ python -m pytest -q
 rn-readiness scan path/to/react-native-repo --json
 ```
 
+```powershell
+# Integrated R02 report; Windows R03/R04 explicitly NOT_EVALUATED without a build log
+nativory scan C:\path\to\rn-app --json
+
+# Optional read-only Windows build-log triage: supply evidence from the same failed attempt
+nativory scan C:\path\to\rn-app `
+  --build-log C:\path\to\failed-build.log `
+  --ninja-version 1.10.2 --json
+
+# Independent log triage
+nativory-windows-doctor --project C:\path\to\rn-app `
+  --build-log C:\path\to\failed-build.log `
+  --ninja-version 1.10.2 --json
+```
+
+The legacy `rn-readiness` exit codes below are unchanged. `nativory scan` returns 0 for completed scoped checks, 2 for a confirmed R02 minimum-version violation, 3 when review is required, and 4 for invalid input; **0 does not certify a build**. `nativory-windows-doctor` returns 0 when analysis completed, even when it reports `SUSPECTED`; 4 indicates input error. See the pilot documentation for full status semantics.
+
 Return codes:
 
 - `0` — scoped R02 check passed
@@ -198,6 +215,8 @@ Official reference: <https://developer.android.com/build/releases/about-agp>
 This is a **minimum-version compatibility rule only**, not full Android build compatibility.
 
 ## Project status
+
+**0.2.0 is a pilot distribution candidate**, not a release certification product. Its three installed CLIs are covered by isolated wheel smoke tests on Windows/Linux (Python 3.10 and 3.13). This is packaging evidence, **not** proof of broad real-project coverage or measured time savings. The next milestone is independent RN/Expo acceptance on real failed builds.
 
 This repository is an engineering prototype, not a release certification product. The current useful question is whether evidence-backed tracing like this saves real maintenance time on production React Native apps.
 
