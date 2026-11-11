@@ -9,6 +9,7 @@ import argparse
 import json
 import re
 import sys
+from itertools import chain
 from pathlib import Path, PureWindowsPath
 
 MAX_LOG_BYTES = 8_000_000
@@ -130,19 +131,21 @@ def _version_tuple(version: str | None) -> tuple[int, int, int] | None:
 
 
 def _r04(log: str, ninja_version: str | None, ninja_dir: str | None) -> dict:
-    matches = list(_NINJA_MKDIR.finditer(log))
+    matches = _NINJA_MKDIR.finditer(log)
+    first_match = next(matches, None)
     log_dirs = [_winpath(match.group("directory")) for match in _NINJA_C.finditer(log)]
     unique_dirs = {str(PureWindowsPath(value)).casefold() for value in log_dirs}
     version = _version_tuple(ninja_version)
     evidence: dict = {
-        "ninja_mkdir_error": bool(matches),
+        "ninja_mkdir_error": first_match is not None,
         "ninja_version_supplied": ninja_version,
         "ninja_version_source": "operator_argument" if ninja_version else "not_provided",
         "working_directory_source": "operator_argument" if ninja_dir else ("build_log" if log_dirs else "unresolved"),
         "longest_mkdir_path_length": None,
+        "longest_mkdir_path_length_unit": "utf16_code_units",
         "max_path_threshold": 260,
     }
-    if not matches:
+    if first_match is None:
         return {"rule": "R04_NINJA_LONG_PATH", "status": "NO_MATCH",
                 "summary": "No Ninja mkdir failure signature in the supplied log; not a build-health pass.",
                 "evidence": evidence}
@@ -157,20 +160,25 @@ def _r04(log: str, ninja_version: str | None, ninja_dir: str | None) -> dict:
                 "summary": "Ninja mkdir failure detected, but its working directory is unknown or conflicting.",
                 "evidence": evidence}
 
-    lengths: list[int] = []
-    for match in matches[:32]:
+    # Consume every mkdir failure within the already bounded 8 MB log. A later
+    # match can have the longest path; never silently cap analysis at 32.
+    longest: int | None = None
+    for match in chain((first_match,), matches):
         relative = re.sub(r"\r?\n[ \t]*", "", match.group(1)).strip()
         if not relative:
             continue
         relative = _winpath(relative)
         child = PureWindowsPath(relative)
         full = child if child.is_absolute() else PureWindowsPath(_winpath(directory)) / child
-        lengths.append(len(str(full)))
-    if not lengths:
+        # Windows path lengths use UTF-16 code units, not Python code points.
+        # surrogatepass also preserves any surrogate code units in CLI input.
+        path_length = len(str(full).encode("utf-16-le", errors="surrogatepass")) // 2
+        if longest is None or path_length > longest:
+            longest = path_length
+    if longest is None:
         return {"rule": "R04_NINJA_LONG_PATH", "status": "NOT_EVALUATED",
                 "summary": "Ninja mkdir failure captured without a parseable directory path.", "evidence": evidence}
 
-    longest = max(lengths)
     evidence["longest_mkdir_path_length"] = longest
     evidence["ninja_version_below_1_12"] = version < (1, 12, 0) if version else None
     if longest >= 260 and version is not None and version < (1, 12, 0):
