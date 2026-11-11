@@ -136,10 +136,15 @@ def project_android_root(repo: Path) -> Path:
 
 
 def _relative_source(repo: Path, path: Path) -> str:
+    """Keep in-project provenance, but never serialize an external host path.
+
+    An external catalog may legitimately supply AGP evidence. Its real path is
+    used for reading; only the report-facing source label is redacted.
+    """
     try:
         return path.relative_to(repo).as_posix()
     except ValueError:
-        return path.as_posix()
+        return f"external_dependency/{path.name}"
 
 
 def _evidence_sort_key(item: Evidence) -> tuple[str, str, str, tuple[str, ...]]:
